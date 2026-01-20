@@ -4,7 +4,12 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/supabase_service.dart';
 import '../services/onboarding_service.dart';
+import '../widgets/couple_avatar.dart';
+import '../widgets/partner_connected_dialog.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'add_plan_screen.dart';
+import 'notifications_screen.dart';
+import 'our_bloom_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,8 +24,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _username;
   String? _profileImageUrl;
   String? _partnerId;
-  bool _isLoading = true;
+  String? _partnerProfileImageUrl;
   bool _showShareCode = true;
+  final List<_PlanItem> _upcomingPlans = [];
   final List<TextEditingController> _codeControllers =
       List.generate(5, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(5, (_) => FocusNode());
@@ -28,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    _loadUserData(); // Load data in background without showing loader
   }
 
   @override
@@ -46,9 +52,6 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final user = SupabaseService.currentUser;
       if (user == null) {
-        setState(() {
-          _isLoading = false;
-        });
         return;
       }
 
@@ -64,13 +67,18 @@ class _HomeScreenState extends State<HomeScreen> {
           _profileImageUrl = response['profile_image_url'] as String?;
           _inviteCode = response['invite_code'] as String?;
           _partnerId = response['partner_id'] as String?;
-          _isLoading = false;
         });
+        
+        // Load partner profile image if partner exists
+        if (_partnerId != null) {
+          _loadPartnerProfile();
+        }
+
+        _loadUpcomingPlans();
       } else {
         final code = await OnboardingService.getInviteCode();
         setState(() {
           _inviteCode = code;
-          _isLoading = false;
         });
       }
     } catch (e) {
@@ -78,13 +86,66 @@ class _HomeScreenState extends State<HomeScreen> {
         final code = await OnboardingService.getInviteCode();
         setState(() {
           _inviteCode = code;
-          _isLoading = false;
         });
       } catch (e2) {
+        // Silently fail, UI will show with default values
+      }
+    }
+  }
+
+  Future<void> _loadPartnerProfile() async {
+    final partnerId = _partnerId;
+    if (partnerId == null) return;
+    
+    try {
+      final partnerResponse = await SupabaseService.client
+          .from('user_profiles')
+          .select('profile_image_url')
+          .eq('id', partnerId)
+          .maybeSingle();
+      
+      if (partnerResponse != null && mounted) {
         setState(() {
-          _isLoading = false;
+          _partnerProfileImageUrl = partnerResponse['profile_image_url'] as String?;
         });
       }
+    } catch (e) {
+      // Silently fail, partner image will show placeholder
+    }
+  }
+
+  Future<void> _loadUpcomingPlans() async {
+    final user = SupabaseService.currentUser;
+    if (user == null) return;
+
+    try {
+      final partnerId = _partnerId;
+      final now = DateTime.now().toIso8601String();
+      final baseQuery = SupabaseService.client
+          .from('plans')
+          .select('plan_title, location, theme_color, plan_date_time')
+          .gte('plan_date_time', now);
+      final response = await ((partnerId != null && partnerId.isNotEmpty)
+              ? baseQuery.or(
+                  'user_id.eq.${user.id},user_id.eq.$partnerId',
+                )
+              : baseQuery.eq('user_id', user.id))
+          .order('plan_date_time', ascending: true)
+          .limit(2);
+
+      if (mounted) {
+        setState(() {
+          _upcomingPlans
+            ..clear()
+            ..addAll(
+              (response as List<dynamic>)
+                  .map((item) => _PlanItem.fromMap(item as Map<String, dynamic>))
+                  .where((item) => item.planDateTime != null),
+            );
+        });
+      }
+    } catch (e) {
+      // Silently fail, upcoming list will be empty
     }
   }
 
@@ -133,15 +194,24 @@ class _HomeScreenState extends State<HomeScreen> {
       if (result['success'] == true) {
         await OnboardingService.completeOnboarding();
         await _loadUserData();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Partner connected successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+        final partnerName = await _getPartnerName(result['partner_id'] as String?);
+
+        if (!mounted) return;
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => PartnerConnectedDialog(
+            partnerName: partnerName,
+            onPrimaryPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const OurBloomScreen(),
+                ),
+              );
+            },
+          ),
+        );
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -164,17 +234,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<String> _getPartnerName(String? partnerId) async {
+    if (partnerId == null) return 'your partner';
+    try {
+      final response = await SupabaseService.client
+          .from('user_profiles')
+          .select('username')
+          .eq('id', partnerId)
+          .maybeSingle();
+      final name = response?['username'] as String?;
+      if (name != null && name.trim().isNotEmpty) {
+        return name;
+      }
+    } catch (_) {
+      // Ignore and use fallback
+    }
+    return 'your partner';
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        body: Container(
-          color: const Color(0xFFFFF8F6),
-          child: const Center(child: CircularProgressIndicator()),
-        ),
-      );
-    }
-
     return Scaffold(
       body: Container(
         color: const Color(0xFFFFF8F6),
@@ -187,11 +266,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Top section
                 _buildTopSection(),
                 const SizedBox(height: 24),
+                // Partner connection card
+                if (_partnerId == null) _buildPartnerConnectionCard(),
+                if (_partnerId == null) const SizedBox(height: 24),
                 // Welcome section
                 _buildWelcomeSection(),
                 const SizedBox(height: 24),
-                // Partner connection card
-                if (_partnerId == null) _buildPartnerConnectionCard(),
+                _buildUpcomingPlansCard(),
                 const SizedBox(height: 24),
                 // Partnership card
                 _buildPartnershipCard(),
@@ -207,6 +288,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+      floatingActionButton: _buildFloatingActionButton(),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
@@ -214,90 +297,23 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildTopSection() {
     return Row(
       children: [
-        // Profile pictures - wrapped in SizedBox to provide bounded constraints
-        SizedBox(
-          width: 49,
-          height: 61, // 49 + 12 offset
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-            // User profile (below)
-            Positioned(
-              left: 0,
-              top: 12,
-              child: Container(
-                width: 49,
-                height: 49,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFF7C3ABA),
-                    width: 2,
-                  ),
-                ),
-                child: CircleAvatar(
-                  radius: 22.5,
-                  backgroundColor: Colors.white,
-                  backgroundImage: _profileImageUrl != null
-                      ? NetworkImage(_profileImageUrl!)
-                      : null,
-                  child: _profileImageUrl == null
-                      ? Icon(Icons.person, color: Colors.grey[400], size: 28)
-                      : null,
-                ),
-              ),
-            ),
-            // Partner add icon (on top)
-            Positioned(
-              left: 0,
-              top: 0,
-              child: _partnerId == null
-                  ? GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _showShareCode = false;
-                        });
-                      },
-                      child: Container(
-                        width: 49,
-                        height: 49,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xFF7C3ABA),
-                              Color(0xFFC8A8E9),
-                            ],
-                          ),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.add,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                      ),
-                    )
-                  : Container(
-                      width: 49,
-                      height: 49,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF7C3ABA),
-                          width: 2,
-                        ),
-                      ),
-                      child: CircleAvatar(
-                        radius: 22.5,
-                        backgroundColor: Colors.white,
-                        child: Icon(Icons.person, color: Colors.grey[400], size: 28),
-                      ),
-                    ),
-            ),
-          ],
-        ),
+        // Couple avatar component
+        CoupleAvatar(
+          userProfileImageUrl: _profileImageUrl,
+          partnerProfileImageUrl: _partnerProfileImageUrl,
+          hasPartner: _partnerId != null,
+          size: 49,
+          onTap: () {
+            if (_partnerId == null) {
+              // Open Add Partner flow
+              setState(() {
+                _showShareCode = false;
+              });
+            } else {
+              // Navigate to Couple Details page
+              // TODO: Navigate to couple details screen
+            }
+          },
         ),
         const Spacer(),
         // Calendar and notification icons
@@ -316,18 +332,26 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-          ),
-          child: SvgPicture.asset(
-            'assets/images/notifications.svg',
-            width: 20,
-            height: 20,
-            fit: BoxFit.scaleDown,
+        GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const NotificationsScreen()),
+            );
+          },
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: SvgPicture.asset(
+              'assets/images/notifications.svg',
+              width: 20,
+              height: 20,
+              fit: BoxFit.scaleDown,
+            ),
           ),
         ),
       ],
@@ -356,6 +380,150 @@ class _HomeScreenState extends State<HomeScreen> {
             color: const Color(0xFF4D4B4B),
             height: 1.5,
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUpcomingPlansCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F0FF),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.calendar_today_outlined,
+                    size: 18, color: Color(0xFF7C3ABA)),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Upcoming',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF4D4B4B),
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AddPlanScreen()),
+                  );
+                },
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF4F0FF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.add, color: Color(0xFF7C3ABA), size: 18),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_upcomingPlans.isEmpty)
+            Text(
+              'No upcoming plans yet.',
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                color: const Color(0xFF8E8A8A),
+              ),
+            )
+          else
+            Column(
+              children: _upcomingPlans
+                  .map((plan) => Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: _buildUpcomingPlanRow(plan),
+                      ))
+                  .toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUpcomingPlanRow(_PlanItem plan) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 4,
+          height: 48,
+          decoration: BoxDecoration(
+            color: plan.themeColor,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                plan.title,
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF1F1F1F),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                plan.location,
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: const Color(0xFF7B7575),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              plan.dateLabel,
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF4D4B4B),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              plan.timeLabel,
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: const Color(0xFF7B7575),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -631,34 +799,24 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                Center(
-                  child: SvgPicture.asset(
-                    'assets/images/plan.svg',
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF7C3ABA),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.add,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ],
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/images/plan.svg',
+                width: 120,
+                height: 120,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Moments you want to set aside time for — dates, trips, or simple days you don\'t want to forget.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF4D4B4B),
+              height: 1.4,
             ),
           ),
           const SizedBox(height: 16),
@@ -666,7 +824,12 @@ class _HomeScreenState extends State<HomeScreen> {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddPlanScreen()),
+                );
+              },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF7C3ABA),
                 foregroundColor: Colors.white,
@@ -706,34 +869,24 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                Center(
-                  child: Image.asset(
-                    'assets/images/bucketlist-icon.png',
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF7C3ABA),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.add,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ],
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/images/goal.svg',
+                width: 120,
+                height: 120,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Ideas and dreams you want to experience together, whether they\'re soon or someday.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF4D4B4B),
+              height: 1.4,
             ),
           ),
           const SizedBox(height: 16),
@@ -781,34 +934,24 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                Center(
-                  child: SvgPicture.asset(
-                    'assets/images/wishlist-icon.svg',
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF7C3ABA),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.add,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ],
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/images/wishlistill.svg',
+                width: 120,
+                height: 120,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Things you love, want, or hope to receive, so gifting feels easy and thoughtful.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.normal,
+              color: const Color(0xFF4D4B4B),
+              height: 1.4,
             ),
           ),
           const SizedBox(height: 16),
@@ -841,6 +984,89 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showShortcutMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.event, color: Color(0xFF7C3ABA)),
+              title: Text(
+                'Add Plan',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddPlanScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.check_circle_outline, color: Color(0xFF7C3ABA)),
+              title: Text(
+                'Add to Bucket List',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                // TODO: Navigate to add bucket list screen
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_outline, color: Color(0xFF7C3ABA)),
+              title: Text(
+                'Add to Wish List',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                // TODO: Navigate to add wish list screen
+              },
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingActionButton() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 18), // 18px above bottom nav
+      child: FloatingActionButton(
+        onPressed: () {
+          _showShortcutMenu(context);
+        },
+        backgroundColor: const Color(0xFF7C3ABA),
+        shape: const CircleBorder(),
+        child: const Icon(
+          Icons.add,
+          color: Colors.white,
+          size: 28,
+        ),
       ),
     );
   }
@@ -879,36 +1105,130 @@ class _HomeScreenState extends State<HomeScreen> {
     final isActive = _currentIndex == index;
     final color = isActive ? const Color(0xFF7C3ABA) : const Color(0xFF4D4B4B);
     
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _currentIndex = index;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: iconPath.endsWith('.svg')
-            ? SvgPicture.asset(
-                iconPath,
-                width: 24,
-                height: 24,
-                colorFilter: ColorFilter.mode(
-                  color,
-                  BlendMode.srcIn,
-                ),
-              )
-            : ColorFiltered(
-                colorFilter: ColorFilter.mode(
-                  color,
-                  BlendMode.srcIn,
-                ),
-                child: Image.asset(
-                  iconPath,
-                  width: 24,
-                  height: 24,
-                ),
-              ),
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isActive)
+          Container(
+            width: 40,
+            height: 3,
+            decoration: BoxDecoration(
+              color: const Color(0xFF7C3ABA),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          )
+        else
+          const SizedBox(height: 3),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: () {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: iconPath.endsWith('.svg')
+                ? SvgPicture.asset(
+                    iconPath,
+                    width: 24,
+                    height: 24,
+                    colorFilter: ColorFilter.mode(
+                      color,
+                      BlendMode.srcIn,
+                    ),
+                  )
+                : ColorFiltered(
+                    colorFilter: ColorFilter.mode(
+                      color,
+                      BlendMode.srcIn,
+                    ),
+                    child: Image.asset(
+                      iconPath,
+                      width: 24,
+                      height: 24,
+                    ),
+                  ),
+          ),
+        ),
+      ],
     );
+  }
+}
+
+class _PlanItem {
+  const _PlanItem({
+    required this.title,
+    required this.location,
+    required this.planDateTime,
+    required this.themeColor,
+  });
+
+  final String title;
+  final String location;
+  final DateTime? planDateTime;
+  final Color themeColor;
+
+  String get dateLabel {
+    final dateTime = planDateTime;
+    if (dateTime == null) return '';
+    return '${_monthLabel(dateTime.month)} ${dateTime.day}';
+  }
+
+  String get timeLabel {
+    final dateTime = planDateTime;
+    if (dateTime == null) return '';
+    final hour = dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final suffix = hour >= 12 ? 'PM' : 'AM';
+    final hour12 = hour % 12 == 0 ? 12 : hour % 12;
+    return '$hour12:$minute $suffix';
+  }
+
+  static _PlanItem fromMap(Map<String, dynamic> map) {
+    final dateValue = map['plan_date_time'];
+    DateTime? parsed;
+    if (dateValue is String) {
+      parsed = DateTime.tryParse(dateValue);
+    }
+    return _PlanItem(
+      title: map['plan_title'] as String? ?? 'Untitled plan',
+      location: map['location'] as String? ?? 'Location pending',
+      planDateTime: parsed,
+      themeColor: _colorFromHex(map['theme_color'] as String?),
+    );
+  }
+
+  static Color _colorFromHex(String? hex) {
+    switch (hex) {
+      case '#6EB4FF':
+        return const Color(0xFF6EB4FF);
+      case '#F4D100':
+        return const Color(0xFFF4D100);
+      case '#FFB7C3':
+        return const Color(0xFFFFB7C3);
+      case '#C8A8E9':
+        return const Color(0xFFC8A8E9);
+      default:
+        return const Color(0xFFC8A8E9);
+    }
+  }
+
+  static String _monthLabel(int month) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return months[(month - 1).clamp(0, 11)];
   }
 }

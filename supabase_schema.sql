@@ -11,11 +11,22 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   invite_code TEXT,
   partner_invite_code TEXT, -- Code of the partner they connected with
   partner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Connected partner's user ID
+  couple_id UUID, -- Shared couple profile id
   age_range TEXT CHECK (age_range IN ('18-24', '25-34', '35-44', '45+')),
   experience_level TEXT CHECK (experience_level IN ('First time using something like this', 'I''ve tried similar apps')),
   onboarding_completed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Couples Table (shared profile for two users)
+CREATE TABLE IF NOT EXISTS couples (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_a_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  user_b_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (user_a_id, user_b_id),
+  CHECK (user_a_id <> user_b_id)
 );
 
 -- Add missing columns if they don't exist (for existing tables)
@@ -67,6 +78,14 @@ BEGIN
     WHERE table_name = 'user_profiles' AND column_name = 'partner_id'
   ) THEN
     ALTER TABLE user_profiles ADD COLUMN partner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+
+  -- Add couple_id column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'user_profiles' AND column_name = 'couple_id'
+  ) THEN
+    ALTER TABLE user_profiles ADD COLUMN couple_id UUID REFERENCES couples(id) ON DELETE SET NULL;
   END IF;
   
   -- Add age_range column if it doesn't exist
@@ -183,6 +202,21 @@ CREATE TABLE IF NOT EXISTS user_interests (
   UNIQUE(user_id, interest)
 );
 
+-- Plans Table
+CREATE TABLE IF NOT EXISTS plans (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  plan_title TEXT NOT NULL,
+  location TEXT,
+  checklist TEXT[],
+  notes TEXT,
+  links TEXT,
+  theme_color TEXT,
+  plan_date_time TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indexes for better query performance
 -- Only create indexes if the columns exist
 DO $$
@@ -203,10 +237,19 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_user_interests_user_id ON user_interests(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_couple_id ON user_profiles(couple_id);
+CREATE INDEX IF NOT EXISTS idx_couples_user_a_id ON couples(user_a_id);
+CREATE INDEX IF NOT EXISTS idx_couples_user_b_id ON couples(user_b_id);
+
+-- Indexes for plans
+CREATE INDEX IF NOT EXISTS idx_plans_user_id ON plans(user_id);
+CREATE INDEX IF NOT EXISTS idx_plans_plan_date_time ON plans(plan_date_time);
 
 -- Enable Row Level Security
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_interests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE couples ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for user_profiles
 -- Drop existing policies if they exist
@@ -240,6 +283,15 @@ CREATE POLICY "Users can update own profile"
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
 
+-- RLS Policies for couples
+DROP POLICY IF EXISTS "Users can view own couple" ON couples;
+
+CREATE POLICY "Users can view own couple"
+  ON couples FOR SELECT
+  USING (
+    auth.uid() = user_a_id OR auth.uid() = user_b_id
+  );
+
 -- RLS Policies for user_interests
 -- Drop existing policies if they exist
 DROP POLICY IF EXISTS "Users can view own interests" ON user_interests;
@@ -272,6 +324,50 @@ CREATE POLICY "Users can insert own interests"
 -- Users can delete their own interests
 CREATE POLICY "Users can delete own interests"
   ON user_interests FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- RLS Policies for plans
+DROP POLICY IF EXISTS "Users can view own plans" ON plans;
+DROP POLICY IF EXISTS "Users can view partner plans" ON plans;
+DROP POLICY IF EXISTS "Users can insert own plans" ON plans;
+DROP POLICY IF EXISTS "Users can update own plans" ON plans;
+DROP POLICY IF EXISTS "Users can delete own plans" ON plans;
+
+-- Users can view their own plans
+CREATE POLICY "Users can view own plans"
+  ON plans FOR SELECT
+  USING (auth.uid() = user_id);
+
+-- Users can view their partner's plans
+CREATE POLICY "Users can view partner plans"
+  ON plans FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = plans.user_id
+      AND (
+        up.partner_id = auth.uid()
+        OR up.couple_id = (
+          SELECT couple_id FROM user_profiles WHERE id = auth.uid()
+        )
+      )
+    )
+  );
+
+-- Users can insert their own plans
+CREATE POLICY "Users can insert own plans"
+  ON plans FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+-- Users can update their own plans
+CREATE POLICY "Users can update own plans"
+  ON plans FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- Users can delete their own plans
+CREATE POLICY "Users can delete own plans"
+  ON plans FOR DELETE
   USING (auth.uid() = user_id);
 
 -- Function to generate unique invite code
@@ -356,12 +452,19 @@ CREATE TRIGGER update_user_profiles_updated_at
   BEFORE UPDATE ON user_profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- Trigger to update updated_at on plans
+DROP TRIGGER IF EXISTS update_plans_updated_at ON plans;
+CREATE TRIGGER update_plans_updated_at
+  BEFORE UPDATE ON plans
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Function to connect partners via invite code
 CREATE OR REPLACE FUNCTION connect_partners(invite_code_param TEXT)
 RETURNS JSON AS $$
 DECLARE
   partner_user_id UUID;
   current_user_id UUID;
+  v_couple_id UUID;
 BEGIN
   current_user_id := auth.uid();
   
@@ -375,17 +478,29 @@ BEGIN
   IF partner_user_id IS NULL THEN
     RETURN json_build_object('success', false, 'message', 'Invalid or already connected invite code');
   END IF;
-  
+
+  -- Create or reuse couple record
+  WITH upsert_couple AS (
+    INSERT INTO couples (user_a_id, user_b_id)
+    VALUES (LEAST(current_user_id, partner_user_id), GREATEST(current_user_id, partner_user_id))
+    ON CONFLICT (user_a_id, user_b_id)
+    DO UPDATE SET user_a_id = EXCLUDED.user_a_id
+    RETURNING id
+  )
+  SELECT id INTO v_couple_id FROM upsert_couple;
+
   -- Update both users to connect them
   UPDATE user_profiles
   SET partner_id = partner_user_id,
       partner_invite_code = invite_code_param,
+      couple_id = v_couple_id,
       updated_at = NOW()
   WHERE id = current_user_id;
   
   UPDATE user_profiles
   SET partner_id = current_user_id,
       partner_invite_code = (SELECT invite_code FROM user_profiles WHERE id = current_user_id),
+      couple_id = v_couple_id,
       updated_at = NOW()
   WHERE id = partner_user_id;
   

@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:postgrest/postgrest.dart';
 import '../services/supabase_service.dart';
 import '../utils/code_generator.dart';
 import 'dart:io';
@@ -40,18 +42,12 @@ class OnboardingService {
         .maybeSingle();
 
     if (existingProfile == null) {
-      // Profile doesn't exist, create it with invite code
-      final inviteCode = CodeGenerator.generateCode();
-      await SupabaseService.client
-          .from('user_profiles')
-          .insert({
-            'id': user.id,
-            'email': user.email ?? '',
-            'username': username,
-            'invite_code': inviteCode,
-            if (imageUrl != null) 'profile_image_url': imageUrl,
-            'onboarding_completed': false,
-          });
+      // Profile doesn't exist, create it with a unique invite code
+      await _insertProfileWithUniqueCode(
+        user: user,
+        username: username,
+        imageUrl: imageUrl,
+      );
     } else {
       // Profile exists, update it
       await SupabaseService.client
@@ -101,17 +97,11 @@ class OnboardingService {
         .maybeSingle();
 
     if (existingProfile == null) {
-      // Profile doesn't exist, create it
-      final inviteCode = CodeGenerator.generateCode();
-      await SupabaseService.client
-          .from('user_profiles')
-          .insert({
-            'id': user.id,
-            'email': user.email ?? '',
-            'invite_code': inviteCode,
-            'experience_level': experienceLevel,
-            'onboarding_completed': false,
-          });
+      // Profile doesn't exist, create it with a unique invite code
+      await _insertProfileWithUniqueCode(
+        user: user,
+        experienceLevel: experienceLevel,
+      );
     } else {
       // Profile exists, update it
       await SupabaseService.client
@@ -136,17 +126,11 @@ class OnboardingService {
         .maybeSingle();
 
     if (existingProfile == null) {
-      // Profile doesn't exist, create it
-      final inviteCode = CodeGenerator.generateCode();
-      await SupabaseService.client
-          .from('user_profiles')
-          .insert({
-            'id': user.id,
-            'email': user.email ?? '',
-            'invite_code': inviteCode,
-            'age_range': ageRange,
-            'onboarding_completed': false,
-          });
+      // Profile doesn't exist, create it with a unique invite code
+      await _insertProfileWithUniqueCode(
+        user: user,
+        ageRange: ageRange,
+      );
     } else {
       // Profile exists, update it
       await SupabaseService.client
@@ -168,7 +152,38 @@ class OnboardingService {
       params: {'invite_code_param': inviteCode.toUpperCase()},
     );
 
-    return response as Map<String, dynamic>;
+    return _normalizeConnectPartnerResponse(response);
+  }
+
+  static Map<String, dynamic> _normalizeConnectPartnerResponse(
+    dynamic response,
+  ) {
+    dynamic data = response;
+    if (response is PostgrestResponse) {
+      data = response.data;
+    }
+
+    if (data is Map<String, dynamic>) return data;
+
+    if (data is List && data.isNotEmpty && data.first is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(data.first as Map<String, dynamic>);
+    }
+
+    if (data is String && data.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(data);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      } catch (_) {
+        // Fall through to error response below
+      }
+    }
+
+    return {
+      'success': false,
+      'message': 'Unexpected response from server. Please try again.',
+    };
   }
 
   /// Mark onboarding as completed
@@ -198,16 +213,8 @@ class OnboardingService {
 
       // If profile doesn't exist, create it with invite code
       if (response == null) {
-        // Profile doesn't exist, create it
-        final inviteCode = CodeGenerator.generateCode();
-        await SupabaseService.client
-            .from('user_profiles')
-            .insert({
-              'id': user.id,
-              'email': user.email,
-              'invite_code': inviteCode,
-              'onboarding_completed': false,
-            });
+        // Profile doesn't exist, create it with a unique invite code
+        await _insertProfileWithUniqueCode(user: user);
         return false;
       }
 
@@ -231,23 +238,75 @@ class OnboardingService {
           .maybeSingle();
 
       if (response == null) {
-        // Profile doesn't exist, create it with invite code
-        final inviteCode = CodeGenerator.generateCode();
-        await SupabaseService.client
-            .from('user_profiles')
-            .insert({
-              'id': user.id,
-              'email': user.email,
-              'invite_code': inviteCode,
-              'onboarding_completed': false,
-            });
-        return inviteCode;
+        // Profile doesn't exist, create it with a unique invite code
+        await _insertProfileWithUniqueCode(user: user);
+        return await getInviteCode();
       }
 
       return response['invite_code'] as String?;
     } catch (e) {
-      // If error, generate a code and return it
-      return CodeGenerator.generateCode();
+      try {
+        await _insertProfileWithUniqueCode(user: user);
+        final retryResponse = await SupabaseService.client
+            .from('user_profiles')
+            .select('invite_code')
+            .eq('id', user.id)
+            .maybeSingle();
+        if (retryResponse != null && retryResponse['invite_code'] != null) {
+          return retryResponse['invite_code'] as String?;
+        }
+      } catch (_) {
+        // Ignore and fall through to null
+      }
+      return null;
+    }
+  }
+
+  static Future<String> _fetchUniqueInviteCode() async {
+    try {
+      final response =
+          await SupabaseService.client.rpc('generate_unique_invite_code');
+      if (response is String && response.isNotEmpty) {
+        return response;
+      }
+    } catch (_) {
+      // Fallback to local generator if RPC fails
+    }
+    return CodeGenerator.generateCode();
+  }
+
+  static Future<void> _insertProfileWithUniqueCode({
+    required User user,
+    String? username,
+    String? experienceLevel,
+    String? ageRange,
+    String? imageUrl,
+  }) async {
+    const maxAttempts = 5;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final inviteCode = await _fetchUniqueInviteCode();
+      try {
+        await SupabaseService.client.from('user_profiles').insert({
+          'id': user.id,
+          'email': user.email ?? '',
+          'invite_code': inviteCode,
+          if (username != null) 'username': username,
+          if (experienceLevel != null) 'experience_level': experienceLevel,
+          if (ageRange != null) 'age_range': ageRange,
+          if (imageUrl != null) 'profile_image_url': imageUrl,
+          'onboarding_completed': false,
+        });
+        return;
+      } catch (error) {
+        if (error is PostgrestException &&
+            error.code == '23505' &&
+            (error.message.contains('invite_code') ||
+                error.details?.toString().contains('invite_code') == true)) {
+          if (attempt == maxAttempts - 1) rethrow;
+          continue;
+        }
+        rethrow;
+      }
     }
   }
 }

@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../services/supabase_service.dart';
 import '../../services/onboarding_service.dart';
 import '../../utils/code_generator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../home_screen.dart';
+import '../our_bloom_screen.dart';
+import '../../services/supabase_service.dart';
+import '../../widgets/partner_connected_dialog.dart';
 
 class ConnectPartnerScreen extends StatefulWidget {
   const ConnectPartnerScreen({super.key});
@@ -46,26 +47,20 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
         return;
       }
     } catch (e) {
-      // If error, fall back to SharedPreferences
+      // If error, show a message below
     }
-
-    // Fallback to SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    String? savedCode = prefs.getString('user_invite_code');
-
-    if (savedCode == null) {
-      // Generate new code
-      savedCode = CodeGenerator.generateCode();
-      await prefs.setString('user_invite_code', savedCode);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invite code unavailable. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
-
-    setState(() {
-      _inviteCode = savedCode;
-    });
   }
 
   Future<void> _copyCode() async {
-    if (_inviteCode != null) {
+    if (_inviteCode != null && _inviteCode!.isNotEmpty) {
       await Clipboard.setData(ClipboardData(text: _inviteCode!));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -80,7 +75,9 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
 
   Future<void> _shareCode() async {
     // TODO: Implement native share functionality
-    _copyCode();
+    if (_inviteCode != null && _inviteCode!.isNotEmpty) {
+      _copyCode();
+    }
   }
 
   Future<void> _connectWithCode() async {
@@ -106,14 +103,24 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
       if (result['success'] == true) {
         // Mark onboarding as completed
         await OnboardingService.completeOnboarding();
-        
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => const HomeScreen(),
-            ),
-          );
-        }
+        final partnerName = await _getPartnerName(result['partner_id'] as String?);
+
+        if (!mounted) return;
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => PartnerConnectedDialog(
+            partnerName: partnerName,
+            onPrimaryPressed: () {
+              Navigator.of(dialogContext).pop();
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (context) => const OurBloomScreen(),
+                ),
+              );
+            },
+          ),
+        );
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -140,6 +147,24 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
         });
       }
     }
+  }
+
+  Future<String> _getPartnerName(String? partnerId) async {
+    if (partnerId == null) return 'your partner';
+    try {
+      final response = await SupabaseService.client
+          .from('user_profiles')
+          .select('username')
+          .eq('id', partnerId)
+          .maybeSingle();
+      final name = response?['username'] as String?;
+      if (name != null && name.trim().isNotEmpty) {
+        return name;
+      }
+    } catch (_) {
+      // Ignore and use fallback
+    }
+    return 'your partner';
   }
 
   Future<void> _skipAndGoHome() async {
@@ -179,6 +204,8 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasInviteCode = _inviteCode != null && _inviteCode!.isNotEmpty;
+    final displayCode = hasInviteCode ? _inviteCode! : '-----';
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -268,7 +295,7 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
                       // Invite code display
                       Row(
                         children: [
-                          ...(_inviteCode?.split('') ?? []).asMap().entries.map(
+                          ...displayCode.split('').asMap().entries.map(
                                 (entry) => Expanded(
                                   child: Container(
                                     margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -296,7 +323,7 @@ class _ConnectPartnerScreenState extends State<ConnectPartnerScreen> {
                               ),
                           const SizedBox(width: 8),
                           IconButton(
-                            onPressed: _copyCode,
+                            onPressed: hasInviteCode ? _copyCode : null,
                             icon: const Icon(
                               Icons.copy,
                               color: Color(0xFF4D4B4B),
