@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'individual_profile_screen.dart';
+
 enum _NotificationKind { alert, love, reminder }
 
 class _NotificationItem {
@@ -255,7 +257,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         const SizedBox(height: 4),
         GestureDetector(
           onTap: () {
-            if (index == 0) Navigator.of(context).pop();
+            if (index == 0) {
+              Navigator.of(context).pop();
+              return;
+            }
+            if (index == 4) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const IndividualProfileScreen()),
+              );
+            }
             // Other tabs can be implemented later
           },
           child: Container(

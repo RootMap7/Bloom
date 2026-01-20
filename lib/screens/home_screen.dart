@@ -8,6 +8,7 @@ import '../widgets/couple_avatar.dart';
 import '../widgets/partner_connected_dialog.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'add_plan_screen.dart';
+import 'individual_profile_screen.dart';
 import 'notifications_screen.dart';
 import 'our_bloom_screen.dart';
 
@@ -304,15 +305,11 @@ class _HomeScreenState extends State<HomeScreen> {
           hasPartner: _partnerId != null,
           size: 49,
           onTap: () {
-            if (_partnerId == null) {
-              // Open Add Partner flow
-              setState(() {
-                _showShareCode = false;
-              });
-            } else {
-              // Navigate to Couple Details page
-              // TODO: Navigate to couple details screen
-            }
+            // Navigate to Our Bloom profile page
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const OurBloomScreen()),
+            );
           },
         ),
         const Spacer(),
@@ -1122,6 +1119,13 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 4),
         GestureDetector(
           onTap: () {
+            if (index == 4) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const IndividualProfileScreen()),
+              );
+              return;
+            }
             setState(() {
               _currentIndex = index;
             });
