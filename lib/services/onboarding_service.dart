@@ -53,11 +53,42 @@ class OnboardingService {
       await SupabaseService.client
           .from('user_profiles')
           .update({
-            'username': username,
-            if (imageUrl != null) 'profile_image_url': imageUrl,
-          })
-          .eq('id', user.id);
+          'username': username,
+          if (imageUrl != null) 'profile_image_url': imageUrl,
+        })
+        .eq('id', user.id);
     }
+  }
+
+  /// Uploads a profile image and updates the user's profile.
+  static Future<String?> uploadProfileImage(File profileImage) async {
+    final user = SupabaseService.currentUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final fileExtension = profileImage.path.split('.').last;
+    final fileName = '${user.id}/profile.$fileExtension';
+
+    await SupabaseService.client.storage
+        .from('profile-images')
+        .upload(
+          fileName,
+          profileImage,
+          fileOptions: FileOptions(
+            upsert: true,
+            contentType: 'image/$fileExtension',
+          ),
+        );
+
+    final imageUrl = SupabaseService.client.storage
+        .from('profile-images')
+        .getPublicUrl(fileName);
+
+    await SupabaseService.client
+        .from('user_profiles')
+        .update({'profile_image_url': imageUrl})
+        .eq('id', user.id);
+
+    return imageUrl;
   }
 
   /// Save user interests

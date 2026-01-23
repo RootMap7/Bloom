@@ -4,9 +4,15 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/supabase_service.dart';
 import '../services/onboarding_service.dart';
+import '../services/bucket_list_service.dart';
+import '../services/wish_list_service.dart';
+import '../models/bucket_list_item.dart';
+import '../models/wish_list_item.dart';
 import '../widgets/couple_avatar.dart';
 import '../widgets/partner_connected_dialog.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'add_bucket_list_item_screen.dart';
+import 'add_wish_list_item_screen.dart';
 import 'add_plan_screen.dart';
 import 'individual_profile_screen.dart';
 import 'notifications_screen.dart';
@@ -28,6 +34,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _partnerProfileImageUrl;
   bool _showShareCode = true;
   final List<_PlanItem> _upcomingPlans = [];
+  List<BucketListItem> _recentBucketListItems = [];
+  List<WishListItem> _recentWishListItems = [];
   final List<TextEditingController> _codeControllers =
       List.generate(5, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(5, (_) => FocusNode());
@@ -65,7 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (response != null) {
         setState(() {
           _username = response['username'] as String?;
-          _profileImageUrl = response['profile_image_url'] as String?;
+          _profileImageUrl = SupabaseService.getOptimizedImageUrl(response['profile_image_url'] as String?);
           _inviteCode = response['invite_code'] as String?;
           _partnerId = response['partner_id'] as String?;
         });
@@ -76,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         _loadUpcomingPlans();
+        _loadRecentItems();
       } else {
         final code = await OnboardingService.getInviteCode();
         setState(() {
@@ -107,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
       
       if (partnerResponse != null && mounted) {
         setState(() {
-          _partnerProfileImageUrl = partnerResponse['profile_image_url'] as String?;
+          _partnerProfileImageUrl = SupabaseService.getOptimizedImageUrl(partnerResponse['profile_image_url'] as String?);
         });
       }
     } catch (e) {
@@ -147,6 +156,22 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       // Silently fail, upcoming list will be empty
+    }
+  }
+
+  Future<void> _loadRecentItems() async {
+    try {
+      final bucketItems = await BucketListService.fetchRecentItems();
+      final wishItems = await WishListService.fetchRecentItems();
+      
+      if (mounted) {
+        setState(() {
+          _recentBucketListItems = bucketItems;
+          _recentWishListItems = wishItems;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading recent items: $e');
     }
   }
 
@@ -274,9 +299,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildWelcomeSection(),
                 const SizedBox(height: 24),
                 _buildUpcomingPlansCard(),
-                const SizedBox(height: 24),
-                // Partnership card
-                _buildPartnershipCard(),
                 const SizedBox(height: 16),
                 // Bucketlist card
                 _buildBucketlistCard(),
@@ -298,13 +320,19 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildTopSection() {
     return Row(
       children: [
-        // Couple avatar component
         CoupleAvatar(
           userProfileImageUrl: _profileImageUrl,
           partnerProfileImageUrl: _partnerProfileImageUrl,
           hasPartner: _partnerId != null,
           size: 49,
-          onTap: () {
+          onUserTap: () {
+            // Navigate to Our Bloom profile page
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const OurBloomScreen()),
+            );
+          },
+          onPartnerTap: () {
             // Navigate to Our Bloom profile page
             Navigator.push(
               context,
@@ -425,7 +453,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const AddPlanScreen()),
-                  );
+                  ).then((_) => _loadUpcomingPlans());
                 },
                 child: Container(
                   width: 32,
@@ -441,11 +469,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 16),
           if (_upcomingPlans.isEmpty)
-            Text(
-              'No upcoming plans yet.',
-              style: GoogleFonts.manrope(
-                fontSize: 14,
-                color: const Color(0xFF8E8A8A),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'No upcoming plans yet.',
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  color: const Color(0xFF8E8A8A),
+                ),
               ),
             )
           else
@@ -785,136 +816,75 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPartnershipCard() {
-    return Container(
-      height: 316,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        children: [
-          Expanded(
-            child: Center(
-              child: SvgPicture.asset(
-                'assets/images/plan.svg',
-                width: 120,
-                height: 120,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Moments you want to set aside time for — dates, trips, or simple days you don\'t want to forget.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.manrope(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: const Color(0xFF4D4B4B),
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const AddPlanScreen()),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7C3ABA),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Add plans',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBucketlistCard() {
     return Container(
-      height: 316,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Center(
-              child: SvgPicture.asset(
-                'assets/images/goal.svg',
-                width: 120,
-                height: 120,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Ideas and dreams you want to experience together, whether they\'re soon or someday.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.manrope(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: const Color(0xFF4D4B4B),
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7C3ABA),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
                   borderRadius: BorderRadius.circular(12),
                 ),
+                child: const Icon(Icons.shopping_bag_outlined,
+                    size: 18, color: Color(0xFF22C55E)),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Add items to your bucket-list',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+              const SizedBox(width: 10),
+              Text(
+                'Bucketlist - Recently Added',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF4D4B4B),
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AddBucketListItemScreen()),
+                  ).then((_) => _loadRecentItems());
+                },
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF0FDF4),
+                    shape: BoxShape.circle,
                   ),
-                ],
+                  child: const Icon(Icons.add, color: Color(0xFF22C55E), size: 18),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          if (_recentBucketListItems.isEmpty)
+            _buildHorizontalEmptyState('bucket-list items')
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _recentBucketListItems.map((item) {
+                  return _buildHorizontalItemCard(
+                    title: item.title,
+                    subtitle: item.targetDate != null
+                        ? 'Added ${_formatDate(item.createdAt)}\n${_formatDate(item.targetDate!)}'
+                        : 'Added ${_formatDate(item.createdAt)}\nNo Due Date',
+                    color: _parseHexColor(item.themeColor),
+                  );
+                }).toList(),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -922,67 +892,146 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildWishlistCard() {
     return Container(
-      height: 316,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Center(
-              child: SvgPicture.asset(
-                'assets/images/wishlistill.svg',
-                width: 120,
-                height: 120,
-                fit: BoxFit.contain,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Things you love, want, or hope to receive, so gifting feels easy and thoughtful.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.manrope(
-              fontSize: 14,
-              fontWeight: FontWeight.normal,
-              color: const Color(0xFF4D4B4B),
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7C3ABA),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
                   borderRadius: BorderRadius.circular(12),
                 ),
+                child: const Icon(Icons.favorite_outline,
+                    size: 18, color: Color(0xFFF97316)),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.add, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Add items to your wish-list',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+              const SizedBox(width: 10),
+              Text(
+                'Wishlist - Recently Added',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF4D4B4B),
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AddWishListItemScreen()),
+                  ).then((_) => _loadRecentItems());
+                },
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFF7ED),
+                    shape: BoxShape.circle,
                   ),
-                ],
+                  child: const Icon(Icons.add, color: Color(0xFFF97316), size: 18),
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          if (_recentWishListItems.isEmpty)
+            _buildHorizontalEmptyState('wish-list items')
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _recentWishListItems.map((item) {
+                  return _buildHorizontalItemCard(
+                    title: item.title,
+                    subtitle: 'Added ${_formatDate(item.createdAt)}\n${item.categoryName ?? 'Category name'}',
+                    color: _parseHexColor(item.themeColor),
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHorizontalEmptyState(String itemType) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Center(
+        child: Text(
+          'Tap + to add your first $itemType.',
+          style: GoogleFonts.manrope(
+            fontSize: 14,
+            color: const Color(0xFF8E8A8A),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHorizontalItemCard({
+    required String title,
+    required String subtitle,
+    required Color color,
+  }) {
+    return Container(
+      width: 160,
+      height: 180,
+      margin: const EdgeInsets.only(right: 12),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.manrope(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: Colors.black,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            subtitle,
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.black.withOpacity(0.5),
             ),
           ),
         ],
       ),
     );
+  }
+
+  String _formatDate(DateTime date) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[date.month - 1]} ${date.day}';
+  }
+
+  Color _parseHexColor(String? hex) {
+    if (hex == null || hex.isEmpty) return const Color(0xFFC8A8E9);
+    try {
+      return Color(int.parse(hex.replaceFirst('#', '0xFF')));
+    } catch (_) {
+      return const Color(0xFFC8A8E9);
+    }
   }
 
   void _showShortcutMenu(BuildContext context) {
@@ -1026,7 +1075,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Navigate to add bucket list screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddBucketListItemScreen()),
+                );
               },
             ),
             ListTile(
@@ -1040,7 +1092,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Navigate to add wish list screen
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddWishListItemScreen()),
+                );
               },
             ),
             const SizedBox(height: 10),

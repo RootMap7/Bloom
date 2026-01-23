@@ -222,21 +222,21 @@ class _UsernameScreenState extends State<UsernameScreen> {
                       filled: true,
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(15),
                         borderSide: const BorderSide(
                           color: Color(0xFFC8A8E9),
                           width: 0.7,
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(15),
                         borderSide: const BorderSide(
                           color: Color(0xFFC8A8E9),
                           width: 0.7,
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(15),
                         borderSide: const BorderSide(
                           color: Color(0xFFC8A8E9),
                           width: 0.7,

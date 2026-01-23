@@ -28,64 +28,75 @@ class PlanSavedScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFFFFF8F6),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 12),
-              Text(
-                'Its a date!',
-                style: GoogleFonts.manrope(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const SizedBox(height: 40),
+                        Text(
+                          'Its a date!',
+                          style: GoogleFonts.manrope(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Your plan is saved and added to your\nshared calendar.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.manrope(
+                            fontSize: 16,
+                            color: const Color(0xFF4D4B4B),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF7C3ABA),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.check, color: Colors.white, size: 24),
+                        ),
+                        const SizedBox(height: 32),
+                        _buildPlanCard(),
+                        const SizedBox(height: 24),
+                        _buildNotificationCard(),
+                        const Spacer(),
+                        const SizedBox(height: 24),
+                        _buildPrimaryButton(
+                          label: 'Export to Calendar',
+                          onPressed: () => _exportToCalendar(context),
+                          filled: true,
+                        ),
+                        const SizedBox(height: 14),
+                        _buildPrimaryButton(
+                          label: 'Done',
+                          onPressed: () {
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(builder: (context) => const HomeScreen()),
+                              (route) => false,
+                            );
+                          },
+                          filled: false,
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Your plan is saved and added to your\nshared calendar.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.manrope(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF6E6A6A),
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                width: 48,
-                height: 48,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF7C3ABA),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.check, color: Colors.white),
-              ),
-              const SizedBox(height: 22),
-              _buildPlanCard(),
-              const SizedBox(height: 18),
-              _buildNotificationCard(),
-              const Spacer(),
-              _buildPrimaryButton(
-                label: 'Export to Calendar',
-                onPressed: () => _exportToCalendar(context),
-                filled: true,
-              ),
-              const SizedBox(height: 14),
-              _buildPrimaryButton(
-                label: 'Done',
-                onPressed: () {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const HomeScreen()),
-                    (route) => false,
-                  );
-                },
-                filled: false,
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -94,20 +105,21 @@ class PlanSavedScreen extends StatelessWidget {
   Widget _buildPlanCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
         color: themeColor,
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(32),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             location,
             style: GoogleFonts.manrope(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: Colors.black.withValues(alpha: 0.65),
+              color: Colors.black.withOpacity(0.5),
             ),
           ),
           const SizedBox(height: 8),
@@ -115,18 +127,18 @@ class PlanSavedScreen extends StatelessWidget {
             title,
             style: GoogleFonts.manrope(
               fontSize: 32,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
               color: Colors.black,
               height: 1.1,
             ),
           ),
-          const SizedBox(height: 80),
+          const SizedBox(height: 60),
           Text(
             dateLabel,
             style: GoogleFonts.manrope(
               fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Colors.black.withValues(alpha: 0.6),
+              fontWeight: FontWeight.w600,
+              color: Colors.black.withOpacity(0.5),
             ),
           ),
           const SizedBox(height: 4),
@@ -134,8 +146,8 @@ class PlanSavedScreen extends StatelessWidget {
             timeLabel,
             style: GoogleFonts.manrope(
               fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Colors.black.withValues(alpha: 0.6),
+              fontWeight: FontWeight.w600,
+              color: Colors.black.withOpacity(0.5),
             ),
           ),
         ],
@@ -146,32 +158,36 @@ class PlanSavedScreen extends StatelessWidget {
   Widget _buildNotificationCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
-            width: 44,
-            height: 44,
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF6EB4FF), width: 2),
+              color: const Color(0xFFF3E8FF),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(
-              Icons.notifications_none,
-              color: Color(0xFF6EB4FF),
-            ),
+            child: const Icon(Icons.notifications_outlined, color: Color(0xFF7C3ABA)),
           ),
-          const SizedBox(width: 12),
-          Text(
-            'We\'ve notified Cate!',
-            style: GoogleFonts.manrope(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF4D4B4B),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              'We\'ve notified Cate!',
+              style: GoogleFonts.manrope(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -186,25 +202,43 @@ class PlanSavedScreen extends StatelessWidget {
   }) {
     return SizedBox(
       width: double.infinity,
-      height: 52,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: filled ? const Color(0xFF7C3ABA) : Colors.white,
-          foregroundColor: filled ? Colors.white : const Color(0xFF7C3ABA),
-          side: filled ? null : const BorderSide(color: Color(0xFF7C3ABA)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-        ),
-        child: Text(
-          label,
-          style: GoogleFonts.manrope(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
+      height: 56,
+      child: filled
+          ? ElevatedButton(
+              onPressed: onPressed,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF7C3ABA),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                elevation: 0,
+              ),
+              child: Text(
+                label,
+                style: GoogleFonts.manrope(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          : OutlinedButton(
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF7C3ABA), width: 1.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+              ),
+              child: Text(
+                label,
+                style: GoogleFonts.manrope(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF7C3ABA),
+                ),
+              ),
+            ),
     );
   }
 

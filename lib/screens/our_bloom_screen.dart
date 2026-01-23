@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/supabase_service.dart';
 import '../widgets/couple_avatar.dart';
+import '../widgets/pet_name_modal.dart';
+import 'individual_profile_screen.dart';
 
 class OurBloomScreen extends StatefulWidget {
   const OurBloomScreen({super.key});
@@ -38,7 +40,7 @@ class _OurBloomScreenState extends State<OurBloomScreen> {
 
       setState(() {
         _username = response?['username'] as String?;
-        _profileImageUrl = response?['profile_image_url'] as String?;
+        _profileImageUrl = SupabaseService.getOptimizedImageUrl(response?['profile_image_url'] as String?, width: 260, height: 260);
         _partnerId = response?['partner_id'] as String?;
       });
 
@@ -61,8 +63,7 @@ class _OurBloomScreenState extends State<OurBloomScreen> {
       if (partnerResponse != null && mounted) {
         setState(() {
           _partnerUsername = partnerResponse['username'] as String?;
-          _partnerProfileImageUrl =
-              partnerResponse['profile_image_url'] as String?;
+          _partnerProfileImageUrl = SupabaseService.getOptimizedImageUrl(partnerResponse['profile_image_url'] as String?, width: 260, height: 260);
         });
       }
     } catch (e) {
@@ -128,6 +129,27 @@ class _OurBloomScreenState extends State<OurBloomScreen> {
                 partnerProfileImageUrl: _partnerProfileImageUrl,
                 hasPartner: _partnerId != null,
                 size: 130,
+                onUserTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const IndividualProfileScreen(),
+                    ),
+                  );
+                },
+                onPartnerTap: () {
+                  if (_partnerId != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => IndividualProfileScreen(
+                          userId: _partnerId,
+                          isPartner: true,
+                        ),
+                      ),
+                    ).then((_) => _loadProfile());
+                  }
+                },
               ),
               const SizedBox(height: 20),
               Text(

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   age_range TEXT CHECK (age_range IN ('18-24', '25-34', '35-44', '45+')),
   experience_level TEXT CHECK (experience_level IN ('First time using something like this', 'I''ve tried similar apps')),
   onboarding_completed BOOLEAN DEFAULT FALSE,
+  partner_pet_name TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -111,6 +112,14 @@ BEGIN
   ) THEN
     ALTER TABLE user_profiles ADD COLUMN onboarding_completed BOOLEAN DEFAULT FALSE;
   END IF;
+
+  -- Add partner_pet_name column if it doesn't exist
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'user_profiles' AND column_name = 'partner_pet_name'
+  ) THEN
+    ALTER TABLE user_profiles ADD COLUMN partner_pet_name TEXT;
+  END IF;
   
   -- Add created_at column if it doesn't exist
   IF NOT EXISTS (
@@ -148,6 +157,32 @@ BEGIN
     ALTER TABLE user_profiles ADD CONSTRAINT user_profiles_invite_code_key UNIQUE (invite_code);
   END IF;
 END $$;
+
+-- Profile details table for edit/complete profile flow
+CREATE TABLE IF NOT EXISTS user_profile_details (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  birthday_date DATE,
+  short_note TEXT,
+  interests TEXT,
+  love_language TEXT,
+  care_preferences TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION refresh_user_profile_details_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_user_profile_details_timestamp ON user_profile_details;
+CREATE TRIGGER set_user_profile_details_timestamp
+BEFORE UPDATE ON user_profile_details
+FOR EACH ROW
+EXECUTE FUNCTION refresh_user_profile_details_timestamp();
 
 -- Add NOT NULL constraint on invite_code (only if column is empty, we'll populate it)
 -- We'll handle this in the trigger function
@@ -187,7 +222,7 @@ CREATE POLICY "Users can delete own profile images"
     auth.uid()::text = (storage.foldername(name))[1]
   );
 
--- User Interests Table (Many-to-Many relationship)
+-- User Interests Table (Onboarding Goals)
 CREATE TABLE IF NOT EXISTS user_interests (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -201,6 +236,122 @@ CREATE TABLE IF NOT EXISTS user_interests (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(user_id, interest)
 );
+
+-- Interests Master Table (Personal Interests/Hobbies)
+CREATE TABLE IF NOT EXISTS interests (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  category TEXT NOT NULL,
+  vibe_color TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(category, name)
+);
+
+-- User Selected Interests (Many-to-Many)
+CREATE TABLE IF NOT EXISTS user_selected_interests (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  interest_id UUID REFERENCES interests(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, interest_id)
+);
+
+-- Seed data for interests
+INSERT INTO interests (category, vibe_color, name) VALUES
+('Food & Drink', 'Orange', 'Try Sushi'),
+('Food & Drink', 'Orange', 'Fine Dining'),
+('Food & Drink', 'Orange', 'Street Food Tours'),
+('Food & Drink', 'Orange', 'Wine Tasting'),
+('Food & Drink', 'Orange', 'Home Cooking'),
+('Food & Drink', 'Orange', 'Coffee Date Spots'),
+('Food & Drink', 'Orange', 'Baking Together'),
+('Travel & Adventure', 'Blue', 'Beach Getaways'),
+('Travel & Adventure', 'Blue', 'Hiking & Nature'),
+('Travel & Adventure', 'Blue', 'Road Trips'),
+('Travel & Adventure', 'Blue', 'Camping'),
+('Travel & Adventure', 'Blue', 'City Breaks'),
+('Travel & Adventure', 'Blue', 'Extreme Sports'),
+('Travel & Adventure', 'Blue', 'Staycations'),
+('Home & Lifestyle', 'Lavender', 'Interior Design'),
+('Home & Lifestyle', 'Lavender', 'Gardening'),
+('Home & Lifestyle', 'Lavender', 'DIY Projects'),
+('Home & Lifestyle', 'Lavender', 'Movie Marathons'),
+('Home & Lifestyle', 'Lavender', 'Board Game Nights'),
+('Home & Lifestyle', 'Lavender', 'Hosting Dinners'),
+('Home & Lifestyle', 'Lavender', 'Slow Mornings'),
+('Creativity & Hobbies', 'Pink', 'Painting'),
+('Creativity & Hobbies', 'Pink', 'Pottery'),
+('Creativity & Hobbies', 'Pink', 'Photography'),
+('Creativity & Hobbies', 'Pink', 'Live Music/Concerts'),
+('Creativity & Hobbies', 'Pink', 'Museums & Galleries'),
+('Creativity & Hobbies', 'Pink', 'Dancing'),
+('Creativity & Hobbies', 'Pink', 'Learning a Language'),
+('Wellness & Connection', 'Green', 'Spa Days'),
+('Wellness & Connection', 'Green', 'Meditation'),
+('Wellness & Connection', 'Green', 'Couple''s Yoga'),
+('Wellness & Connection', 'Green', 'Deep Conversations'),
+('Wellness & Connection', 'Green', 'Stargazing'),
+('Wellness & Connection', 'Green', 'Reading Together'),
+('Wellness & Connection', 'Green', 'Volunteer Work'),
+('Entertainment', 'Deep Purple', 'Binge-watching TV'),
+('Entertainment', 'Deep Purple', 'Trivia Nights'),
+('Entertainment', 'Deep Purple', 'E-Sports'),
+('Entertainment', 'Deep Purple', 'Theatre & Musicals'),
+('Entertainment', 'Deep Purple', 'Outdoor Cinemas'),
+('Entertainment', 'Deep Purple', 'Comedy Clubs'),
+('Entertainment', 'Deep Purple', 'Karaoke')
+ON CONFLICT (category, name) DO NOTHING;
+
+-- Love Languages Master Table
+CREATE TABLE IF NOT EXISTS love_languages (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  type TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed data for love_languages
+INSERT INTO love_languages (type, description) VALUES
+('Acts of Service', 'Feeling loved when your partner helps with responsibilities or goes out of their way to make your life easier.'),
+('Quality Time', 'Feeling most connected through undivided attention, shared activities, and meaningful conversations.'),
+('Words of Affirmation', 'Feeling valued through spoken or written words of affection, praise, appreciation, and encouragement.'),
+('Receiving Gifts', 'Feeling loved by the thoughtfulness and effort behind a tangible gift, regardless of its cost.'),
+('Physical Touch', 'Feeling secure and connected through physical closeness, such as holding hands, hugs, or sitting near each other.')
+ON CONFLICT (type) DO NOTHING;
+
+-- RLS for love_languages
+ALTER TABLE love_languages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Love languages are viewable by everyone" ON love_languages;
+CREATE POLICY "Love languages are viewable by everyone"
+  ON love_languages FOR SELECT
+  USING (true);
+
+-- Receive Care Options Master Table
+CREATE TABLE IF NOT EXISTS receive_care_options (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  type TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed data for receive_care_options
+INSERT INTO receive_care_options (type, description) VALUES
+('Emotional Space', 'Holding space for my feelings without immediate solutions.'),
+('Practical Help', 'Taking the lead on chores or planning to lighten my load.'),
+('Physical Presence', 'Being near me in comfortable silence.'),
+('Encouragement', 'Using words and notes to lift my spirit.'),
+('Comfort & Coziness', 'Providing physical comforts like snacks or warmth.'),
+('Quality Time', 'Organizing a distraction-free activity for us.')
+ON CONFLICT (type) DO NOTHING;
+
+-- RLS for receive_care_options
+ALTER TABLE receive_care_options ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Receive care options are viewable by everyone" ON receive_care_options;
+CREATE POLICY "Receive care options are viewable by everyone"
+  ON receive_care_options FOR SELECT
+  USING (true);
 
 -- Plans Table
 CREATE TABLE IF NOT EXISTS plans (
@@ -237,6 +388,8 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_user_interests_user_id ON user_interests(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_selected_interests_user_id ON user_selected_interests(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_selected_interests_interest_id ON user_selected_interests(interest_id);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_couple_id ON user_profiles(couple_id);
 CREATE INDEX IF NOT EXISTS idx_couples_user_a_id ON couples(user_a_id);
 CREATE INDEX IF NOT EXISTS idx_couples_user_b_id ON couples(user_b_id);
@@ -248,8 +401,75 @@ CREATE INDEX IF NOT EXISTS idx_plans_plan_date_time ON plans(plan_date_time);
 -- Enable Row Level Security
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_interests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE interests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_selected_interests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE couples ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for interests (master list)
+DROP POLICY IF EXISTS "Interests are viewable by everyone" ON interests;
+CREATE POLICY "Interests are viewable by everyone"
+  ON interests FOR SELECT
+  USING (true);
+
+-- RLS Policies for user_selected_interests
+DROP POLICY IF EXISTS "Users can view own selected interests" ON user_selected_interests;
+DROP POLICY IF EXISTS "Users can view partner selected interests" ON user_selected_interests;
+DROP POLICY IF EXISTS "Users can insert own selected interests" ON user_selected_interests;
+DROP POLICY IF EXISTS "Users can delete own selected interests" ON user_selected_interests;
+
+CREATE POLICY "Users can view own selected interests"
+  ON user_selected_interests FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can view partner selected interests"
+  ON user_selected_interests FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up 
+      WHERE up.id = user_selected_interests.user_id 
+      AND up.partner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own selected interests"
+  ON user_selected_interests FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own selected interests"
+  ON user_selected_interests FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- RLS Policies for user_profile_details
+ALTER TABLE user_profile_details ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own profile details" ON user_profile_details;
+DROP POLICY IF EXISTS "Users can view partner profile details" ON user_profile_details;
+DROP POLICY IF EXISTS "Users can insert own profile details" ON user_profile_details;
+DROP POLICY IF EXISTS "Users can update own profile details" ON user_profile_details;
+
+CREATE POLICY "Users can view own profile details"
+  ON user_profile_details FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can view partner profile details"
+  ON user_profile_details FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up 
+      WHERE up.id = user_profile_details.user_id 
+      AND up.partner_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own profile details"
+  ON user_profile_details FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own profile details"
+  ON user_profile_details FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- RLS Policies for user_profiles
 -- Drop existing policies if they exist
@@ -457,6 +677,187 @@ DROP TRIGGER IF EXISTS update_plans_updated_at ON plans;
 CREATE TRIGGER update_plans_updated_at
   BEFORE UPDATE ON plans
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Bucket List Categories Table
+CREATE TABLE IF NOT EXISTS bucket_list_categories (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed bucket list categories
+INSERT INTO bucket_list_categories (name) VALUES
+('Travel & Adventure'),
+('Food & Drink'),
+('Home & Cozy'),
+('Creativity & Hobbies'),
+('Wellness & Care'),
+('Entertainment & Fun')
+ON CONFLICT (name) DO NOTHING;
+
+-- Bucket List Items Table
+CREATE TABLE IF NOT EXISTS bucket_list_items (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  title TEXT NOT NULL,
+  target_date TIMESTAMP WITH TIME ZONE,
+  category_id UUID REFERENCES bucket_list_categories(id) ON DELETE SET NULL,
+  collection TEXT,
+  notes TEXT,
+  links TEXT,
+  theme_color TEXT,
+  is_private BOOLEAN DEFAULT FALSE,
+  is_completed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- RLS for bucket_list_categories
+ALTER TABLE bucket_list_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Bucket list categories are viewable by everyone" ON bucket_list_categories;
+CREATE POLICY "Bucket list categories are viewable by everyone"
+  ON bucket_list_categories FOR SELECT
+  USING (true);
+
+-- RLS for bucket_list_items
+ALTER TABLE bucket_list_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own bucket list items" ON bucket_list_items;
+DROP POLICY IF EXISTS "Users can view partner shared bucket list items" ON bucket_list_items;
+DROP POLICY IF EXISTS "Users can insert own bucket list items" ON bucket_list_items;
+DROP POLICY IF EXISTS "Users can update own bucket list items" ON bucket_list_items;
+DROP POLICY IF EXISTS "Users can delete own bucket list items" ON bucket_list_items;
+
+CREATE POLICY "Users can view own bucket list items"
+  ON bucket_list_items FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can view partner shared bucket list items"
+  ON bucket_list_items FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up 
+      WHERE up.id = bucket_list_items.user_id 
+      AND up.partner_id = auth.uid()
+      AND bucket_list_items.is_private = FALSE
+    )
+  );
+
+CREATE POLICY "Users can insert own bucket list items"
+  ON bucket_list_items FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own bucket list items"
+  ON bucket_list_items FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own bucket list items"
+  ON bucket_list_items FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Trigger for bucket_list_items updated_at
+DROP TRIGGER IF EXISTS update_bucket_list_items_updated_at ON bucket_list_items;
+CREATE TRIGGER update_bucket_list_items_updated_at
+  BEFORE UPDATE ON bucket_list_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Wish List Items Table
+CREATE TABLE IF NOT EXISTS wish_list_items (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  title TEXT NOT NULL,
+  category_id UUID REFERENCES bucket_list_categories(id) ON DELETE SET NULL,
+  notes TEXT,
+  links TEXT,
+  theme_color TEXT,
+  is_surprise BOOLEAN DEFAULT FALSE, -- Hide specifics from partner
+  wish_for TEXT CHECK (wish_for IN ('Me', 'Partner')) DEFAULT 'Me',
+  is_private BOOLEAN DEFAULT FALSE, -- Keep hidden until ready
+  is_completed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- RLS for wish_list_items
+ALTER TABLE wish_list_items ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own wish list items" ON wish_list_items;
+CREATE POLICY "Users can view own wish list items"
+  ON wish_list_items FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can view partner shared wish list items" ON wish_list_items;
+CREATE POLICY "Users can view partner shared wish list items"
+  ON wish_list_items FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up 
+      WHERE up.id = wish_list_items.user_id 
+      AND up.partner_id = auth.uid()
+      AND wish_list_items.is_private = FALSE
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can insert own wish list items" ON wish_list_items;
+CREATE POLICY "Users can insert own wish list items"
+  ON wish_list_items FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own wish list items" ON wish_list_items;
+CREATE POLICY "Users can update own wish list items"
+  ON wish_list_items FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own wish list items" ON wish_list_items;
+CREATE POLICY "Users can delete own wish list items"
+  ON wish_list_items FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Trigger for wish_list_items updated_at
+DROP TRIGGER IF EXISTS update_wish_list_items_updated_at ON wish_list_items;
+CREATE TRIGGER update_wish_list_items_updated_at
+  BEFORE UPDATE ON wish_list_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Bucket List Collections Table
+CREATE TABLE IF NOT EXISTS bucket_list_collections (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, name)
+);
+
+-- RLS for bucket_list_collections
+ALTER TABLE bucket_list_collections ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own collections" ON bucket_list_collections;
+CREATE POLICY "Users can view own collections"
+  ON bucket_list_collections FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can view partner collections" ON bucket_list_collections;
+CREATE POLICY "Users can view partner collections"
+  ON bucket_list_collections FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up 
+      WHERE up.id = bucket_list_collections.user_id 
+      AND up.partner_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can insert own collections" ON bucket_list_collections;
+CREATE POLICY "Users can insert own collections"
+  ON bucket_list_collections FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete own collections" ON bucket_list_collections;
+CREATE POLICY "Users can delete own collections"
+  ON bucket_list_collections FOR DELETE
+  USING (auth.uid() = user_id);
 
 -- Function to connect partners via invite code
 CREATE OR REPLACE FUNCTION connect_partners(invite_code_param TEXT)

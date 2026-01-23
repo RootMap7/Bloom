@@ -14,6 +14,16 @@ class SupabaseService {
     );
   }
 
+  // Get optimized image URL using Supabase Storage CDN transformations
+  static String? getOptimizedImageUrl(String? url, {int width = 200, int height = 200}) {
+    if (url == null || url.isEmpty) return null;
+    if (!url.contains('storage/v1/object/public/')) return url;
+    
+    // Replace object/public with render/image/public and add query params
+    return url.replaceFirst('storage/v1/object/public/', 'storage/v1/render/image/public/') + 
+           '?width=$width&height=$height&resize=cover';
+  }
+
   // Check if user is logged in
   static bool get isLoggedIn => client.auth.currentUser != null;
 

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/supabase_service.dart';
 
 class CoupleAvatar extends StatelessWidget {
   final String? userProfileImageUrl;
   final String? partnerProfileImageUrl;
   final bool hasPartner;
-  final VoidCallback? onTap;
+  final VoidCallback? onUserTap;
+  final VoidCallback? onPartnerTap;
   final double size;
 
   const CoupleAvatar({
@@ -13,24 +15,25 @@ class CoupleAvatar extends StatelessWidget {
     this.userProfileImageUrl,
     this.partnerProfileImageUrl,
     required this.hasPartner,
-    this.onTap,
+    this.onUserTap,
+    this.onPartnerTap,
     this.size = 49,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: SizedBox(
-        width: size + (size * 0.35), // Extra width for overlap
-        height: size,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // User profile picture (base, left, slightly behind)
-            Positioned(
-              left: 0,
-              top: 0,
+    return SizedBox(
+      width: size + (size * 0.35), // Extra width for overlap
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // User profile picture (base, left, slightly behind)
+          Positioned(
+            left: 0,
+            top: 0,
+            child: GestureDetector(
+              onTap: onUserTap,
               child: Container(
                 width: size,
                 height: size,
@@ -45,7 +48,7 @@ class CoupleAvatar extends StatelessWidget {
                   radius: (size - 4) / 2, // Account for border
                   backgroundColor: Colors.white,
                   backgroundImage: userProfileImageUrl != null
-                      ? NetworkImage(userProfileImageUrl!)
+                      ? NetworkImage(SupabaseService.getOptimizedImageUrl(userProfileImageUrl, width: (size * 2).toInt(), height: (size * 2).toInt())!)
                       : null,
                   child: userProfileImageUrl == null
                       ? Icon(
@@ -57,10 +60,13 @@ class CoupleAvatar extends StatelessWidget {
                 ),
               ),
             ),
-            // Partner avatar or add button (on top, offset to right)
-            Positioned(
-              left: size * 0.35, // 35% overlap
-              top: 0,
+          ),
+          // Partner avatar or add button (on top, offset to right)
+          Positioned(
+            left: size * 0.35, // 35% overlap
+            top: 0,
+            child: GestureDetector(
+              onTap: onPartnerTap,
               child: hasPartner
                   ? Container(
                       width: size,
@@ -76,7 +82,7 @@ class CoupleAvatar extends StatelessWidget {
                         radius: (size - 4) / 2,
                         backgroundColor: Colors.white,
                         backgroundImage: partnerProfileImageUrl != null
-                            ? NetworkImage(partnerProfileImageUrl!)
+                            ? NetworkImage(SupabaseService.getOptimizedImageUrl(partnerProfileImageUrl, width: (size * 2).toInt(), height: (size * 2).toInt())!)
                             : null,
                         child: partnerProfileImageUrl == null
                             ? Icon(
@@ -108,8 +114,8 @@ class CoupleAvatar extends StatelessWidget {
                       ),
                     ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
