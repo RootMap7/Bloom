@@ -10,6 +10,12 @@ import '../models/bucket_list_item.dart';
 import '../models/wish_list_item.dart';
 import '../widgets/couple_avatar.dart';
 import '../widgets/partner_connected_dialog.dart';
+import '../widgets/add_important_date_modal.dart';
+import '../widgets/send_bloom_note_modal.dart';
+import '../widgets/floating_tab_bar.dart';
+import '../models/bloom_note.dart';
+import '../services/bloom_note_service.dart';
+import 'lists_view_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'add_bucket_list_item_screen.dart';
 import 'add_wish_list_item_screen.dart';
@@ -27,6 +33,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  late PageController _pageController;
   String? _inviteCode;
   String? _username;
   String? _profileImageUrl;
@@ -36,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<_PlanItem> _upcomingPlans = [];
   List<BucketListItem> _recentBucketListItems = [];
   List<WishListItem> _recentWishListItems = [];
+  BloomNote? _activeBloomNote;
   final List<TextEditingController> _codeControllers =
       List.generate(5, (_) => TextEditingController());
   final List<FocusNode> _focusNodes = List.generate(5, (_) => FocusNode());
@@ -43,11 +51,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
     _loadUserData(); // Load data in background without showing loader
   }
 
   @override
   void dispose() {
+    _pageController.dispose();
     for (var controller in _codeControllers) {
       controller.dispose();
     }
@@ -85,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         _loadUpcomingPlans();
         _loadRecentItems();
+        _loadBloomNote();
       } else {
         final code = await OnboardingService.getInviteCode();
         setState(() {
@@ -172,6 +183,72 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       debugPrint('Error loading recent items: $e');
+    }
+  }
+
+  Future<void> _loadBloomNote() async {
+    try {
+      final note = await BloomNoteService.getActiveNote();
+      if (mounted) {
+        setState(() {
+          _activeBloomNote = note;
+        });
+      }
+      
+      // Check if user has a recently liked note that they sent
+      final likedNote = await BloomNoteService.getRecentlyLikedNoteSentByMe();
+      if (likedNote != null && mounted) {
+        // Get partner's pet name
+        final user = SupabaseService.currentUser;
+        if (user != null) {
+          try {
+            final userProfile = await SupabaseService.client
+                .from('user_profiles')
+                .select('partner_id')
+                .eq('id', user.id)
+                .maybeSingle();
+            
+            final partnerId = userProfile?['partner_id'] as String?;
+            String partnerName = 'Your partner';
+            
+            if (partnerId != null) {
+              final partnerProfile = await SupabaseService.client
+                  .from('user_profiles')
+                  .select('partner_pet_name, username')
+                  .eq('id', partnerId)
+                  .maybeSingle();
+              
+              final petName = partnerProfile?['partner_pet_name'] as String?;
+              final username = partnerProfile?['username'] as String?;
+              partnerName = petName?.isNotEmpty == true 
+                  ? petName! 
+                  : (username?.isNotEmpty == true ? username! : 'Your partner');
+            }
+            
+            if (mounted) {
+              // Show notification at the top with smooth animation
+              final overlay = Overlay.of(context);
+              final overlayEntry = OverlayEntry(
+                builder: (context) => _NotificationBanner(
+                  message: '$partnerName liked your note',
+                  icon: Icons.favorite,
+                ),
+              );
+              
+              overlay.insert(overlayEntry);
+              
+              // Remove after 4 seconds
+              Future.delayed(const Duration(seconds: 4), () {
+                overlayEntry.remove();
+              });
+            }
+          } catch (e) {
+            debugPrint('Error getting partner name: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading bloom note: $e');
     }
   }
 
@@ -278,43 +355,95 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'your partner';
   }
 
+  void _onTabChanged(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        color: const Color(0xFFFFF8F6),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              children: [
-                const SizedBox(height: 20),
-                // Top section
-                _buildTopSection(),
+      body: Stack(
+        children: [
+          // PageView for smooth page transitions
+          PageView(
+            controller: _pageController,
+            onPageChanged: (index) {
+              setState(() {
+                _currentIndex = index;
+              });
+            },
+            children: [
+              _buildHomePage(),
+              _buildOurListPage(),
+              _buildProfilePage(),
+            ],
+          ),
+          // Floating tab bar
+          FloatingTabBar(
+            currentIndex: _currentIndex,
+            onTabChanged: _onTabChanged,
+            onAddPressed: () {
+              _showShortcutMenu(context);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomePage() {
+    return Container(
+      color: const Color(0xFFFFF8F6),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              // Top section
+              _buildTopSection(),
+              const SizedBox(height: 24),
+              // Partner connection card
+              if (_partnerId == null) _buildPartnerConnectionCard(),
+              if (_partnerId == null) const SizedBox(height: 24),
+              // Welcome section
+              _buildWelcomeSection(),
+              const SizedBox(height: 24),
+              // Bloom note card
+              if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
+                _buildBloomNoteCard(),
+              if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
                 const SizedBox(height: 24),
-                // Partner connection card
-                if (_partnerId == null) _buildPartnerConnectionCard(),
-                if (_partnerId == null) const SizedBox(height: 24),
-                // Welcome section
-                _buildWelcomeSection(),
-                const SizedBox(height: 24),
-                _buildUpcomingPlansCard(),
-                const SizedBox(height: 16),
-                // Bucketlist card
-                _buildBucketlistCard(),
-                const SizedBox(height: 16),
-                // Wishlist card
-                _buildWishlistCard(),
-                const SizedBox(height: 80),
-              ],
-            ),
+              _buildUpcomingPlansCard(),
+              const SizedBox(height: 16),
+              // Bucketlist card
+              _buildBucketlistCard(),
+              const SizedBox(height: 16),
+              // Wishlist card
+              _buildWishlistCard(),
+              const SizedBox(height: 120), // Extra padding for floating tab bar
+            ],
           ),
         ),
       ),
-      floatingActionButton: _buildFloatingActionButton(),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      bottomNavigationBar: _buildBottomNavigationBar(),
     );
+  }
+
+  Widget _buildOurListPage() {
+    return const ListsViewScreen(
+      initialListType: ListType.bucketList,
+    );
+  }
+
+  Widget _buildProfilePage() {
+    return const OurBloomScreen();
   }
 
   Widget _buildTopSection() {
@@ -397,7 +526,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Start anywhere. Scroll to add plans, bucket lists, and wishlists — or share your code to begin together.',
+          _activeBloomNote != null && !_activeBloomNote!.isExpired
+              ? 'Here\'s to another shared day.'
+              : 'Start anywhere. Scroll to add plans, bucket lists, and wishlists — or share your code to begin together.',
           textAlign: TextAlign.center,
           style: GoogleFonts.manrope(
             fontSize: 15,
@@ -407,6 +538,132 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildBloomNoteCard() {
+    if (_activeBloomNote == null) return const SizedBox.shrink();
+    
+    final note = _activeBloomNote!;
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF9B6DD6),
+            Color(0xFF7C3ABA),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF7C3ABA).withOpacity(0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'You have a note',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(
+                  Icons.more_horiz,
+                  color: Colors.white,
+                ),
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Delete Note',
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                onSelected: (value) {
+                  if (value == 'delete') {
+                    setState(() {
+                      _activeBloomNote = null;
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDCC4F5),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Center(
+              child: Text(
+                note.message,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.caveat(
+                  fontSize: 24,
+                  color: Colors.black,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: note.isLiked ? null : () async {
+                try {
+                  await BloomNoteService.likeNote(note.id);
+                  _loadBloomNote();
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to like note: ${e.toString()}'),
+                      backgroundColor: const Color(0xFFEF4444),
+                    ),
+                  );
+                }
+              },
+              child: Icon(
+                note.isLiked ? Icons.favorite : Icons.favorite_border,
+                color: note.isLiked ? const Color(0xFFFF3B30) : Colors.white,
+                size: 32,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -817,147 +1074,171 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBucketlistCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.shopping_bag_outlined,
-                    size: 18, color: Color(0xFF22C55E)),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'Bucketlist - Recently Added',
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF4D4B4B),
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AddBucketListItemScreen()),
-                  ).then((_) => _loadRecentItems());
-                },
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF0FDF4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.add, color: Color(0xFF22C55E), size: 18),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          if (_recentBucketListItems.isEmpty)
-            _buildHorizontalEmptyState('bucket-list items')
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _recentBucketListItems.map((item) {
-                  return _buildHorizontalItemCard(
-                    title: item.title,
-                    subtitle: item.targetDate != null
-                        ? 'Added ${_formatDate(item.createdAt)}\n${_formatDate(item.targetDate!)}'
-                        : 'Added ${_formatDate(item.createdAt)}\nNo Due Date',
-                    color: _parseHexColor(item.themeColor),
-                  );
-                }).toList(),
-              ),
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ListsViewScreen(
+              initialListType: ListType.bucketList,
             ),
-        ],
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0FDF4),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.shopping_bag_outlined,
+                      size: 18, color: Color(0xFF22C55E)),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Bucketlist - Recently Added',
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF4D4B4B),
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const AddBucketListItemScreen()),
+                    ).then((_) => _loadRecentItems());
+                  },
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF0FDF4),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.add, color: Color(0xFF22C55E), size: 18),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (_recentBucketListItems.isEmpty)
+              _buildHorizontalEmptyState('bucket-list items')
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _recentBucketListItems.map((item) {
+                    return _buildHorizontalItemCard(
+                      title: item.title,
+                      subtitle: item.targetDate != null
+                          ? 'Added ${_formatDate(item.createdAt)}\n${_formatDate(item.targetDate!)}'
+                          : 'Added ${_formatDate(item.createdAt)}\nNo Due Date',
+                      color: _parseHexColor(item.themeColor),
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildWishlistCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF7ED),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.favorite_outline,
-                    size: 18, color: Color(0xFFF97316)),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'Wishlist - Recently Added',
-                style: GoogleFonts.manrope(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF4D4B4B),
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AddWishListItemScreen()),
-                  ).then((_) => _loadRecentItems());
-                },
-                child: Container(
-                  width: 32,
-                  height: 32,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFFFF7ED),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.add, color: Color(0xFFF97316), size: 18),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          if (_recentWishListItems.isEmpty)
-            _buildHorizontalEmptyState('wish-list items')
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _recentWishListItems.map((item) {
-                  return _buildHorizontalItemCard(
-                    title: item.title,
-                    subtitle: 'Added ${_formatDate(item.createdAt)}\n${item.categoryName ?? 'Category name'}',
-                    color: _parseHexColor(item.themeColor),
-                  );
-                }).toList(),
-              ),
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const ListsViewScreen(
+              initialListType: ListType.wishList,
             ),
-        ],
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.favorite_outline,
+                      size: 18, color: Color(0xFFF97316)),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Wishlist - Recently Added',
+                  style: GoogleFonts.manrope(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF4D4B4B),
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const AddWishListItemScreen()),
+                    ).then((_) => _loadRecentItems());
+                  },
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFFF7ED),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.add, color: Color(0xFFF97316), size: 18),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (_recentWishListItems.isEmpty)
+              _buildHorizontalEmptyState('wish-list items')
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _recentWishListItems.map((item) {
+                    return _buildHorizontalItemCard(
+                      title: item.title,
+                      subtitle: 'Added ${_formatDate(item.createdAt)}\n${item.categoryName ?? 'Category name'}',
+                      color: _parseHexColor(item.themeColor),
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1098,6 +1379,94 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.calendar_today, color: Color(0xFF7C3ABA)),
+              title: Text(
+                'Add Important Date',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                
+                // Get couple_id
+                final user = SupabaseService.currentUser;
+                if (user == null) return;
+                
+                try {
+                  final response = await SupabaseService.client
+                      .from('user_profiles')
+                      .select('couple_id')
+                      .eq('id', user.id)
+                      .maybeSingle();
+                  
+                  final coupleId = response?['couple_id'] as String?;
+                  
+                  if (coupleId != null && mounted) {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => Padding(
+                        padding: EdgeInsets.only(
+                          bottom: MediaQuery.of(context).viewInsets.bottom,
+                        ),
+                        child: AddImportantDateModal(
+                          coupleId: coupleId,
+                          onSaved: () {
+                            // Optionally refresh home screen data
+                          },
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please connect with your partner first'),
+                        backgroundColor: Color(0xFFEF4444),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to load data'),
+                      backgroundColor: Color(0xFFEF4444),
+                    ),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.note_add, color: Color(0xFF7C3ABA)),
+              title: Text(
+                'Send a Bloom Note',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (context) => Padding(
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).viewInsets.bottom,
+                    ),
+                    child: SendBloomNoteModal(
+                      onSaved: () {
+                        _loadBloomNote();
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
             const SizedBox(height: 10),
           ],
         ),
@@ -1105,112 +1474,121 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildFloatingActionButton() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 18), // 18px above bottom nav
-      child: FloatingActionButton(
-        onPressed: () {
-          _showShortcutMenu(context);
-        },
-        backgroundColor: const Color(0xFF7C3ABA),
-        shape: const CircleBorder(),
-        child: const Icon(
-          Icons.add,
-          color: Colors.white,
-          size: 28,
-        ),
-      ),
+}
+
+class _NotificationBanner extends StatefulWidget {
+  final String message;
+  final IconData icon;
+
+  const _NotificationBanner({
+    required this.message,
+    required this.icon,
+  });
+
+  @override
+  State<_NotificationBanner> createState() => _NotificationBannerState();
+}
+
+class _NotificationBannerState extends State<_NotificationBanner>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _slideAnimation;
+  late Animation<double> _opacityAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
     );
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, -1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    ));
+
+    _opacityAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeIn,
+    ));
+
+    _controller.forward();
+
+    // Start exit animation after 3.5 seconds
+    Future.delayed(const Duration(milliseconds: 3500), () {
+      if (mounted) {
+        _controller.reverse();
+      }
+    });
   }
 
-  Widget _buildBottomNavigationBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildNavItem(0, 'assets/images/home-icon.svg', 'Home'),
-              _buildNavItem(1, 'assets/images/goal.svg', 'Heart'),
-              _buildNavItem(2, 'assets/images/bloom-menuicon.png', 'Flower'),
-              _buildNavItem(3, 'assets/images/bucketlist-icon.png', 'Bucket'),
-              _buildNavItem(4, 'assets/images/profile-icon.svg', 'Profile'),
-            ],
-          ),
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
-  Widget _buildNavItem(int index, String iconPath, String label) {
-    final isActive = _currentIndex == index;
-    final color = isActive ? const Color(0xFF7C3ABA) : const Color(0xFF4D4B4B);
-    
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (isActive)
-          Container(
-            width: 40,
-            height: 3,
-            decoration: BoxDecoration(
-              color: const Color(0xFF7C3ABA),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          )
-        else
-          const SizedBox(height: 3),
-        const SizedBox(height: 4),
-        GestureDetector(
-          onTap: () {
-            if (index == 4) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const IndividualProfileScreen()),
-              );
-              return;
-            }
-            setState(() {
-              _currentIndex = index;
-            });
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: iconPath.endsWith('.svg')
-                ? SvgPicture.asset(
-                    iconPath,
-                    width: 24,
-                    height: 24,
-                    colorFilter: ColorFilter.mode(
-                      color,
-                      BlendMode.srcIn,
-                    ),
-                  )
-                : ColorFiltered(
-                    colorFilter: ColorFilter.mode(
-                      color,
-                      BlendMode.srcIn,
-                    ),
-                    child: Image.asset(
-                      iconPath,
-                      width: 24,
-                      height: 24,
-                    ),
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SlideTransition(
+        position: _slideAnimation,
+        child: FadeTransition(
+          opacity: _opacityAnimation,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF9B6DD6),
+                      Color(0xFF7C3ABA),
+                    ],
                   ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF7C3ABA).withOpacity(0.4),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(widget.icon, color: Colors.white, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.message,
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
