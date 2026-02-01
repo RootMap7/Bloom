@@ -3,6 +3,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'individual_profile_screen.dart';
+import '../services/supabase_service.dart';
+import '../services/bloom_note_service.dart';
 
 enum _NotificationKind { alert, love, reminder }
 
@@ -28,50 +30,106 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  final List<_NotificationItem> _items = const [
-    _NotificationItem(
-      kind: _NotificationKind.alert,
-      title: 'Alert: New Features unlocked\nwith the new update',
-      timeLabel: 'Just now',
-      unread: true,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.love,
-      title: 'Love sent you a note',
-      timeLabel: '1h ago',
-      unread: true,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.love,
-      title: 'Love added a new item on the\nbucket-list',
-      timeLabel: '2h ago',
-      unread: true,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.love,
-      title: 'Love liked items on your wish-list',
-      timeLabel: '2h ago',
-      unread: true,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.love,
-      title: 'Love liked your note',
-      timeLabel: '2h ago',
-      unread: true,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.reminder,
-      title: 'Reminder: Your anniversary is in 5 days',
-      timeLabel: '4h ago',
-      unread: false,
-    ),
-    _NotificationItem(
-      kind: _NotificationKind.reminder,
-      title: 'Reminder: Gamenight @ Nia’s is this\nFriday 6 PM',
-      timeLabel: 'Yesterday',
-      unread: false,
-    ),
-  ];
+  List<_NotificationItem> _items = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    try {
+      final user = SupabaseService.currentUser;
+      if (user == null) return;
+
+      // Get partner info
+      final userProfile = await SupabaseService.client
+          .from('user_profiles')
+          .select('partner_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final partnerId = userProfile?['partner_id'] as String?;
+      String partnerName = 'Your partner';
+
+      if (partnerId != null) {
+        final partnerProfile = await SupabaseService.client
+            .from('user_profiles')
+            .select('partner_pet_name, username')
+            .eq('id', partnerId)
+            .maybeSingle();
+
+        final petName = partnerProfile?['partner_pet_name'] as String?;
+        final username = partnerProfile?['username'] as String?;
+        partnerName = petName?.isNotEmpty == true
+            ? petName!
+            : (username?.isNotEmpty == true ? username! : 'Your partner');
+      }
+
+      final notifications = <_NotificationItem>[];
+
+      // Check for active note from partner
+      final activeNote = await BloomNoteService.getActiveNote();
+      if (activeNote != null) {
+        notifications.add(
+          _NotificationItem(
+            kind: _NotificationKind.love,
+            title: '$partnerName sent you a note',
+            timeLabel: _getTimeLabel(activeNote.createdAt),
+            unread: true,
+          ),
+        );
+      }
+
+      // Check for liked notes
+      final likedNote = await BloomNoteService.getRecentlyLikedNoteSentByMe();
+      if (likedNote != null && likedNote.likedAt != null) {
+        notifications.add(
+          _NotificationItem(
+            kind: _NotificationKind.love,
+            title: '$partnerName liked your note',
+            timeLabel: _getTimeLabel(likedNote.likedAt!),
+            unread: true,
+          ),
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _items = notifications;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading notifications: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  String _getTimeLabel(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inDays == 1) {
+      return 'Yesterday';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} days ago';
+    } else {
+      return '${dateTime.month}/${dateTime.day}/${dateTime.year}';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -97,12 +155,42 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       body: Container(
         color: const Color(0xFFFFF8F6),
         child: SafeArea(
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(20, 76, 20, 140),
-            itemBuilder: (context, index) => _buildNotificationCard(_items[index]),
-            separatorBuilder: (context, index) => const SizedBox(height: 16),
-            itemCount: _items.length,
-          ),
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFF7C3ABA),
+                  ),
+                )
+              : _items.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.notifications_none,
+                            size: 80,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No notifications yet',
+                            style: GoogleFonts.manrope(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(20, 76, 20, 140),
+                      itemBuilder: (context, index) =>
+                          _buildNotificationCard(_items[index]),
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 16),
+                      itemCount: _items.length,
+                    ),
         ),
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),

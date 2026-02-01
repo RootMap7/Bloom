@@ -140,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 prefixIcon: const Icon(
                                   Icons.email_outlined,
-                                  color: Color(0xFF7C3ABA),
+                                  color: Color(0xFF4D4B4B),
                                 ),
                                 filled: true,
                                 fillColor: Colors.white,
@@ -201,14 +201,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 prefixIcon: const Icon(
                                   Icons.lock_outline,
-                                  color: Color(0xFF7C3ABA),
+                                  color: Color(0xFF4D4B4B),
                                 ),
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     _obscurePassword
                                         ? Icons.visibility_outlined
                                         : Icons.visibility_off_outlined,
-                                    color: const Color(0xFF7C3ABA),
+                                    color: const Color(0xFF4D4B4B),
                                   ),
                                   onPressed: () {
                                     setState(() {

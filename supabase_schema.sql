@@ -909,3 +909,314 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Daily Activities Table for Streak Tracking
+CREATE TABLE IF NOT EXISTS daily_activities (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  couple_id UUID REFERENCES couples(id) ON DELETE CASCADE NOT NULL,
+  activity_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  activity_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(couple_id, activity_date)
+);
+
+-- Index for faster queries
+CREATE INDEX IF NOT EXISTS idx_daily_activities_couple_date ON daily_activities(couple_id, activity_date DESC);
+
+-- RLS for daily_activities
+ALTER TABLE daily_activities ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their couple's daily activities" ON daily_activities;
+CREATE POLICY "Users can view their couple's daily activities"
+  ON daily_activities FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = daily_activities.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "System can insert daily activities" ON daily_activities;
+CREATE POLICY "System can insert daily activities"
+  ON daily_activities FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = daily_activities.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "System can update daily activities" ON daily_activities;
+CREATE POLICY "System can update daily activities"
+  ON daily_activities FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = daily_activities.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+-- Function to record daily activity for COUPLES
+-- This tracks activity for the entire couple - if EITHER partner performs an action,
+-- it counts toward the shared couple streak.
+CREATE OR REPLACE FUNCTION record_daily_activity()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_couple_id UUID;
+  v_user_id UUID;
+BEGIN
+  -- Determine the user_id from the operation (could be either partner)
+  IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+    v_user_id := NEW.user_id;
+  ELSIF TG_OP = 'DELETE' THEN
+    v_user_id := OLD.user_id;
+  END IF;
+
+  -- Get the couple_id for this user
+  -- Both partners share the same couple_id, so activity from either partner
+  -- will update the SAME daily_activities record for the couple
+  SELECT couple_id INTO v_couple_id
+  FROM user_profiles
+  WHERE id = v_user_id;
+
+  -- Only record if user is in a couple
+  IF v_couple_id IS NOT NULL THEN
+    -- Insert or update the daily activity count for the COUPLE
+    -- This means if Partner A adds an item in the morning and Partner B adds 
+    -- an item in the evening, both activities count toward the same day's streak
+    INSERT INTO daily_activities (couple_id, activity_date, activity_count)
+    VALUES (v_couple_id, CURRENT_DATE, 1)
+    ON CONFLICT (couple_id, activity_date)
+    DO UPDATE SET 
+      activity_count = daily_activities.activity_count + 1,
+      updated_at = NOW();
+  END IF;
+
+  RETURN NEW;
+EXCEPTION
+  WHEN others THEN
+    -- Don't fail the main operation if activity tracking fails
+    RAISE WARNING 'Failed to record daily activity: %', SQLERRM;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Triggers for bucket list items
+DROP TRIGGER IF EXISTS track_bucket_list_activity ON bucket_list_items;
+CREATE TRIGGER track_bucket_list_activity
+  AFTER INSERT OR UPDATE ON bucket_list_items
+  FOR EACH ROW
+  EXECUTE FUNCTION record_daily_activity();
+
+-- Triggers for wish list items
+DROP TRIGGER IF EXISTS track_wish_list_activity ON wish_list_items;
+CREATE TRIGGER track_wish_list_activity
+  AFTER INSERT OR UPDATE ON wish_list_items
+  FOR EACH ROW
+  EXECUTE FUNCTION record_daily_activity();
+
+-- Triggers for plans
+DROP TRIGGER IF EXISTS track_plans_activity ON plans;
+CREATE TRIGGER track_plans_activity
+  AFTER INSERT OR UPDATE ON plans
+  FOR EACH ROW
+  EXECUTE FUNCTION record_daily_activity();
+
+-- Milestone Types Table
+CREATE TABLE IF NOT EXISTS milestone_types (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Seed milestone types
+INSERT INTO milestone_types (name) VALUES
+('The Day We Met'),
+('First Date'),
+('Relationship Anniversary'),
+('Partner''s Birthday'),
+('First ''I Love You'''),
+('Move-in Day')
+ON CONFLICT (name) DO NOTHING;
+
+-- RLS for milestone_types
+ALTER TABLE milestone_types ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Milestone types are viewable by everyone" ON milestone_types;
+CREATE POLICY "Milestone types are viewable by everyone"
+  ON milestone_types FOR SELECT
+  USING (true);
+
+-- Important Dates Table
+CREATE TABLE IF NOT EXISTS important_dates (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  couple_id UUID REFERENCES couples(id) ON DELETE CASCADE NOT NULL,
+  date_title TEXT NOT NULL,
+  event_date DATE NOT NULL,
+  is_recurring BOOLEAN DEFAULT false,
+  remind_me BOOLEAN DEFAULT true,
+  milestone_type_id UUID REFERENCES milestone_types(id) ON DELETE SET NULL,
+  category TEXT,
+  notes TEXT,
+  added_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for faster queries
+CREATE INDEX IF NOT EXISTS idx_important_dates_couple_id ON important_dates(couple_id);
+CREATE INDEX IF NOT EXISTS idx_important_dates_event_date ON important_dates(event_date);
+CREATE INDEX IF NOT EXISTS idx_important_dates_milestone_type ON important_dates(milestone_type_id);
+
+-- RLS for important_dates
+ALTER TABLE important_dates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their couple's important dates" ON important_dates;
+CREATE POLICY "Users can view their couple's important dates"
+  ON important_dates FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = important_dates.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can insert important dates for their couple" ON important_dates;
+CREATE POLICY "Users can insert important dates for their couple"
+  ON important_dates FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = important_dates.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can update their couple's important dates" ON important_dates;
+CREATE POLICY "Users can update their couple's important dates"
+  ON important_dates FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = important_dates.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can delete their couple's important dates" ON important_dates;
+CREATE POLICY "Users can delete their couple's important dates"
+  ON important_dates FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.couple_id = important_dates.couple_id
+      AND up.id = auth.uid()
+    )
+  );
+
+-- Trigger for important_dates updated_at
+DROP TRIGGER IF EXISTS update_important_dates_updated_at ON important_dates;
+CREATE TRIGGER update_important_dates_updated_at
+  BEFORE UPDATE ON important_dates
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to check if anniversary already exists for a couple
+CREATE OR REPLACE FUNCTION check_anniversary_exists()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_milestone_type_name TEXT;
+BEGIN
+  -- Get the milestone type name
+  SELECT name INTO v_milestone_type_name
+  FROM milestone_types
+  WHERE id = NEW.milestone_type_id;
+
+  -- Check if it's an anniversary type
+  IF v_milestone_type_name = 'Relationship Anniversary' THEN
+    -- Check if couple already has an anniversary
+    IF EXISTS (
+      SELECT 1 FROM important_dates id
+      JOIN milestone_types mt ON mt.id = id.milestone_type_id
+      WHERE id.couple_id = NEW.couple_id
+      AND mt.name = 'Relationship Anniversary'
+      AND id.id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::UUID)
+    ) THEN
+      RAISE EXCEPTION 'A couple can only have one Relationship Anniversary date';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to enforce one anniversary per couple
+DROP TRIGGER IF EXISTS enforce_single_anniversary ON important_dates;
+CREATE TRIGGER enforce_single_anniversary
+  BEFORE INSERT OR UPDATE ON important_dates
+  FOR EACH ROW
+  EXECUTE FUNCTION check_anniversary_exists();
+
+-- Bloom Notes Table
+-- Short notes that partners can send to each other, expire after 24 hours
+CREATE TABLE IF NOT EXISTS bloom_notes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  couple_id UUID REFERENCES couples(id) ON DELETE CASCADE NOT NULL,
+  sender_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  recipient_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  message TEXT NOT NULL,
+  is_liked BOOLEAN DEFAULT FALSE,
+  liked_at TIMESTAMP WITH TIME ZONE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for faster queries
+CREATE INDEX IF NOT EXISTS idx_bloom_notes_couple_id ON bloom_notes(couple_id);
+CREATE INDEX IF NOT EXISTS idx_bloom_notes_recipient_id ON bloom_notes(recipient_id);
+CREATE INDEX IF NOT EXISTS idx_bloom_notes_sender_id ON bloom_notes(sender_id);
+CREATE INDEX IF NOT EXISTS idx_bloom_notes_expires_at ON bloom_notes(expires_at);
+
+-- RLS for bloom_notes
+ALTER TABLE bloom_notes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view notes sent to them" ON bloom_notes;
+CREATE POLICY "Users can view notes sent to them"
+  ON bloom_notes FOR SELECT
+  USING (auth.uid() = recipient_id OR auth.uid() = sender_id);
+
+DROP POLICY IF EXISTS "Users can insert notes to their partner" ON bloom_notes;
+CREATE POLICY "Users can insert notes to their partner"
+  ON bloom_notes FOR INSERT
+  WITH CHECK (
+    auth.uid() = sender_id
+    AND EXISTS (
+      SELECT 1 FROM user_profiles up
+      WHERE up.id = auth.uid()
+      AND up.partner_id = bloom_notes.recipient_id
+      AND up.couple_id = bloom_notes.couple_id
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can update notes sent to them (like)" ON bloom_notes;
+CREATE POLICY "Users can update notes sent to them (like)"
+  ON bloom_notes FOR UPDATE
+  USING (auth.uid() = recipient_id)
+  WITH CHECK (auth.uid() = recipient_id);
+
+-- Function to automatically delete expired notes
+CREATE OR REPLACE FUNCTION delete_expired_bloom_notes()
+RETURNS void AS $$
+BEGIN
+  DELETE FROM bloom_notes
+  WHERE expires_at < NOW();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Note: To enable automatic deletion, you would set up a pg_cron job or call this function periodically
+-- For now, the app can filter expired notes on the client side
+

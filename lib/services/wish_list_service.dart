@@ -67,4 +67,32 @@ class WishListService {
       return _recentItemsCache ?? [];
     }
   }
+
+  static Future<List<WishListItem>> fetchAllItems() async {
+    final user = SupabaseService.currentUser;
+    if (user == null) return [];
+
+    try {
+      // Get user's partner_id
+      final userProfile = await SupabaseService.client
+          .from('user_profiles')
+          .select('partner_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final partnerId = userProfile?['partner_id'] as String?;
+
+      // Fetch user's items and partner's non-private items
+      final response = await SupabaseService.client
+          .from('wish_list_items')
+          .select('id, user_id, title, category_id, notes, links, theme_color, is_surprise, wish_for, is_private, is_completed, created_at, bucket_list_categories(name)')
+          .or('user_id.eq.${user.id}${partnerId != null ? ',and(user_id.eq.$partnerId,is_private.eq.false)' : ''}')
+          .order('created_at', ascending: false);
+
+      return (response as List).map((m) => WishListItem.fromMap(m)).toList();
+    } catch (e) {
+      debugPrint('Error fetching all wish list items: $e');
+      return [];
+    }
+  }
 }

@@ -128,4 +128,32 @@ class BucketListService {
       return _recentItemsCache ?? [];
     }
   }
+
+  static Future<List<BucketListItem>> fetchAllItems() async {
+    final user = SupabaseService.currentUser;
+    if (user == null) return [];
+
+    try {
+      // Get user's partner_id
+      final userProfile = await SupabaseService.client
+          .from('user_profiles')
+          .select('partner_id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      final partnerId = userProfile?['partner_id'] as String?;
+
+      // Fetch user's items and partner's non-private items
+      final response = await SupabaseService.client
+          .from('bucket_list_items')
+          .select('id, user_id, title, target_date, category_id, collection, notes, links, theme_color, is_private, is_completed, created_at, bucket_list_categories(name)')
+          .or('user_id.eq.$user.id${partnerId != null ? ',and(user_id.eq.$partnerId,is_private.eq.false)' : ''}')
+          .order('created_at', ascending: false);
+
+      return (response as List).map((m) => BucketListItem.fromMap(m)).toList();
+    } catch (e) {
+      debugPrint('Error fetching all bucket list items: $e');
+      return [];
+    }
+  }
 }
