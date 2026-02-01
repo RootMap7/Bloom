@@ -162,15 +162,12 @@ class _AddWishListItemScreenState extends State<AddWishListItemScreen> {
     setState(() => _isSaving = true);
     
     try {
-      // OPTIMISTIC UI: We prepare the navigation info before awaiting the server
-      final currentUser = SupabaseService.currentUser;
-      String partnerName = 'Partner';
-      // ... (In a real app, we might get this from a local provider/cache)
-
-      // Start the save operation
-      final saveFuture = WishListService.addWishListItem(
+      debugPrint('🚀 Starting save process...');
+      
+      // Wait for the save operation to complete FIRST
+      await WishListService.addWishListItem(
         title: title,
-        categoryId: _selectedCategory?.id,
+        categoryId: null, // Set to null - categories use simple IDs, not UUIDs
         notes: _notesController.text.trim(),
         links: _linksController.text.trim(),
         themeColor: _themeHex(_selectedTheme),
@@ -179,8 +176,12 @@ class _AddWishListItemScreenState extends State<AddWishListItemScreen> {
         isPrivate: _isPrivate,
       );
 
-      // Optimistically navigate to success screen
+      debugPrint('✅ Save completed, navigating to success screen...');
+
+      // Only navigate if save was successful
       if (mounted) {
+        String partnerName = 'Partner';
+        
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -190,7 +191,6 @@ class _AddWishListItemScreenState extends State<AddWishListItemScreen> {
               themeColor: _selectedTheme.color,
               wishFor: _wishFor,
               partnerName: partnerName,
-              // These will be null but the screen can handle it or we can pass placeholders
               userImageUrl: null, 
               partnerImageUrl: null,
             ),
@@ -198,12 +198,29 @@ class _AddWishListItemScreenState extends State<AddWishListItemScreen> {
         );
       }
 
-      // Await in the background
-      await saveFuture;
-
-    } catch (e) {
-      debugPrint('Error saving wish list item: $e');
-      // Rollback logic would go here if we didn't navigate away
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error saving wish list item: $e');
+      debugPrint('📍 Stack trace: $stackTrace');
+      
+      // Show error to user and stay on this screen
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Dismiss',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
     }
   }
 

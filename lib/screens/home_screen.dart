@@ -252,6 +252,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _refreshHomeData() async {
+    await Future.wait([
+      _loadUserData(),
+      _loadRecentItems(),
+      _loadBloomNote(),
+      if (_partnerId != null) _loadPartnerProfile(),
+    ]);
+  }
+
   Future<void> _copyCode() async {
     if (_inviteCode != null) {
       await Clipboard.setData(ClipboardData(text: _inviteCode!));
@@ -402,34 +411,39 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       color: const Color(0xFFFFF8F6),
       child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              // Top section
-              _buildTopSection(),
-              const SizedBox(height: 24),
-              // Partner connection card
-              if (_partnerId == null) _buildPartnerConnectionCard(),
-              if (_partnerId == null) const SizedBox(height: 24),
-              // Welcome section
-              _buildWelcomeSection(),
-              const SizedBox(height: 24),
-              // Bloom note card
-              if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
-                _buildBloomNoteCard(),
-              if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
+        child: RefreshIndicator(
+          onRefresh: _refreshHomeData,
+          color: const Color(0xFF7C3ABA),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                // Top section
+                _buildTopSection(),
                 const SizedBox(height: 24),
-              _buildUpcomingPlansCard(),
-              const SizedBox(height: 16),
-              // Bucketlist card
-              _buildBucketlistCard(),
-              const SizedBox(height: 16),
-              // Wishlist card
-              _buildWishlistCard(),
-              const SizedBox(height: 120), // Extra padding for floating tab bar
-            ],
+                // Partner connection card
+                if (_partnerId == null) _buildPartnerConnectionCard(),
+                if (_partnerId == null) const SizedBox(height: 24),
+                // Welcome section
+                _buildWelcomeSection(),
+                const SizedBox(height: 24),
+                // Bloom note card
+                if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
+                  _buildBloomNoteCard(),
+                if (_activeBloomNote != null && !_activeBloomNote!.isExpired)
+                  const SizedBox(height: 24),
+                _buildUpcomingPlansCard(),
+                const SizedBox(height: 16),
+                // Bucketlist card
+                _buildBucketlistCard(),
+                const SizedBox(height: 16),
+                // Wishlist card
+                _buildWishlistCard(),
+                const SizedBox(height: 120), // Extra padding for floating tab bar
+              ],
+            ),
           ),
         ),
       ),
@@ -438,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildOurListPage() {
     return const ListsViewScreen(
-      initialListType: ListType.bucketList,
+      initialListType: ListType.wishList,
     );
   }
 
@@ -1359,7 +1373,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const AddBucketListItemScreen()),
-                );
+                ).then((_) => _loadRecentItems());
               },
             ),
             ListTile(
@@ -1376,7 +1390,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const AddWishListItemScreen()),
-                );
+                ).then((_) => _loadRecentItems());
               },
             ),
             ListTile(

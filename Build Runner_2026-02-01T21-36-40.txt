@@ -606,11 +606,9 @@ PhaseScriptExecution Run\ Script /Users/kev/Library/Developer/Xcode/DerivedData/
     export variant\=normal
     /bin/sh -c /Users/kev/Library/Developer/Xcode/DerivedData/Runner-cajnwvhqhkebzagmgluytvpfqlpu/Build/Intermediates.noindex/Runner.build/Debug-iphonesimulator/Runner.build/Script-9740EEB61CF901F6004384FC.sh
 
-lib/screens/notifications_screen.dart:100:18: Error: The getter '_isLoading' isn't defined for the type '_NotificationsScreenState'.
- - '_NotificationsScreenState' is from 'package:bloom/screens/notifications_screen.dart' ('lib/screens/notifications_screen.dart').
-Try correcting the name to the name of an existing getter, or defining a getter or field named '_isLoading'.
-          child: _isLoading
-                 ^^^^^^^^^^
+lib/screens/home_screen.dart:411:21: Error: Can't find ')' to match '('.
+    return Container(
+                    ^
 Target kernel_snapshot_program failed: Exception
 Failed to package /Users/kev/Desktop/Bloom.
 Command PhaseScriptExecution failed with a nonzero exit code
@@ -619,4 +617,4 @@ Command PhaseScriptExecution failed with a nonzero exit code
 
 
 
-Build failed    26/01/2026, 15:56    3.8 seconds
+Build failed    01/02/2026, 21:36    4.3 seconds

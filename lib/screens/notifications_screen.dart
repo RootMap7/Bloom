@@ -184,7 +184,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ),
                     )
                   : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(20, 76, 20, 140),
+                      padding: const EdgeInsets.fromLTRB(20, 76, 20, 40),
                       itemBuilder: (context, index) =>
                           _buildNotificationCard(_items[index]),
                       separatorBuilder: (context, index) =>
@@ -193,7 +193,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ),
         ),
       ),
-      bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
 

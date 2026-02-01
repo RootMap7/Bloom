@@ -247,21 +247,16 @@ class _AddBucketListItemScreenState extends State<AddBucketListItemScreen> {
       return;
     }
 
-    // Capture state for rollback if needed
-    final originalIsSaving = _isSaving;
-    
     setState(() => _isSaving = true);
     
-    // OPTIMISTIC UI: Navigate to success screen immediately if possible
-    // but for "Add Item", we might want to wait for the ID or just proceed
-    // The requirement says "update local UI state immediately before the Supabase await finishes"
-    
     try {
-      // Start the save operation but don't await yet if we want true optimistic
-      final saveFuture = BucketListService.addBucketListItem(
+      debugPrint('🚀 Starting save process...');
+      
+      // Wait for the save operation to complete FIRST
+      await BucketListService.addBucketListItem(
         title: title,
         targetDate: _selectedDate,
-        categoryId: _selectedCategory?.id,
+        categoryId: null, // Set to null - categories use simple IDs, not UUIDs
         collection: _selectedCollection,
         notes: _notesController.text.trim(),
         links: _linksController.text.trim(),
@@ -269,13 +264,12 @@ class _AddBucketListItemScreenState extends State<AddBucketListItemScreen> {
         isPrivate: _isPrivate,
       );
 
-      // We proceed to success screen "optimistically"
+      debugPrint('✅ Save completed, navigating to success screen...');
+
+      // Only navigate if save was successful
       if (mounted) {
         String partnerName = 'Partner';
-        // Note: We don't await the full partner name fetch either if we want to be fast
-        // but here it's already doing some async work. 
-        // Let's just focus on the main save being optimistic.
-
+        
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -288,19 +282,30 @@ class _AddBucketListItemScreenState extends State<AddBucketListItemScreen> {
           ),
         );
       }
-
-      // Await in the background
-      await saveFuture;
       
-    } catch (e) {
-      // ROLLBACK: If it fails, we should ideally inform the user.
-      // Since we already navigated away, this is tricky. 
-      // In a real app, we might use a global state manager or a snackbar on the previous screen.
-      debugPrint('Failed to save bucket list item: $e');
-      // If we were still on the screen, we would do:
-      // setState(() {
-      //   _isSaving = originalIsSaving;
-      // });
+    } catch (e, stackTrace) {
+      debugPrint('❌ Failed to save bucket list item: $e');
+      debugPrint('📍 Stack trace: $stackTrace');
+      
+      // Show error to user and stay on this screen
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Dismiss',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
     }
   }
 

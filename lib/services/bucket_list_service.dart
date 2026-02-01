@@ -77,10 +77,21 @@ class BucketListService {
     bool isPrivate = false,
   }) async {
     final user = SupabaseService.currentUser;
-    if (user == null) throw Exception('User not authenticated');
+    
+    debugPrint('🔍 BucketListService.addBucketListItem called');
+    debugPrint('📝 Title: $title');
+    debugPrint('👤 User ID: ${user?.id}');
+    debugPrint('🎨 Theme Color: $themeColor');
+    debugPrint('🏷️ Category ID: $categoryId');
+    debugPrint('📅 Target Date: $targetDate');
+    
+    if (user == null) {
+      debugPrint('❌ ERROR: User not authenticated!');
+      throw Exception('User not authenticated');
+    }
 
     try {
-      await SupabaseService.client.from('bucket_list_items').insert({
+      final data = {
         'user_id': user.id,
         'title': title,
         'target_date': targetDate?.toIso8601String(),
@@ -90,11 +101,18 @@ class BucketListService {
         'links': links,
         'theme_color': themeColor,
         'is_private': isPrivate,
-      });
+      };
+      
+      debugPrint('📤 Inserting data: $data');
+      
+      await SupabaseService.client.from('bucket_list_items').insert(data);
+      
+      debugPrint('✅ Bucket list item added successfully!');
       // Invalidate cache
       _recentItemsCache = null;
-    } catch (e) {
-      debugPrint('Error adding bucket list item: $e');
+    } catch (e, stackTrace) {
+      debugPrint('❌ ERROR adding bucket list item: $e');
+      debugPrint('📍 Stack trace: $stackTrace');
       rethrow;
     }
   }
@@ -147,7 +165,7 @@ class BucketListService {
       final response = await SupabaseService.client
           .from('bucket_list_items')
           .select('id, user_id, title, target_date, category_id, collection, notes, links, theme_color, is_private, is_completed, created_at, bucket_list_categories(name)')
-          .or('user_id.eq.$user.id${partnerId != null ? ',and(user_id.eq.$partnerId,is_private.eq.false)' : ''}')
+          .or('user_id.eq.${user.id}${partnerId != null ? ',and(user_id.eq.$partnerId,is_private.eq.false)' : ''}')
           .order('created_at', ascending: false);
 
       return (response as List).map((m) => BucketListItem.fromMap(m)).toList();

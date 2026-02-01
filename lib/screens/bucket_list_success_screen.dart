@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'home_screen.dart';
 
 class BucketListSuccessScreen extends StatelessWidget {
   final String title;
@@ -146,7 +147,13 @@ class BucketListSuccessScreen extends StatelessWidget {
                           width: double.infinity,
                           height: 56,
                           child: OutlinedButton(
-                            onPressed: () => Navigator.of(context).pop(),
+                            onPressed: () {
+                              // Clear all routes and go to home screen (same as add plan logic)
+                              Navigator.of(context).pushAndRemoveUntil(
+                                MaterialPageRoute(builder: (context) => const HomeScreen()),
+                                (route) => false,
+                              );
+                            },
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFF7C3ABA), width: 1.5),
                               shape: RoundedRectangleBorder(

@@ -16,10 +16,20 @@ class WishListService {
     bool isPrivate = false,
   }) async {
     final user = SupabaseService.currentUser;
-    if (user == null) throw Exception('User not authenticated');
+    
+    debugPrint('🔍 WishListService.addWishListItem called');
+    debugPrint('📝 Title: $title');
+    debugPrint('👤 User ID: ${user?.id}');
+    debugPrint('🎨 Theme Color: $themeColor');
+    debugPrint('🏷️ Category ID: $categoryId');
+    
+    if (user == null) {
+      debugPrint('❌ ERROR: User not authenticated!');
+      throw Exception('User not authenticated');
+    }
 
     try {
-      await SupabaseService.client.from('wish_list_items').insert({
+      final data = {
         'user_id': user.id,
         'title': title,
         'category_id': categoryId,
@@ -29,11 +39,18 @@ class WishListService {
         'is_surprise': isSurprise,
         'wish_for': wishFor,
         'is_private': isPrivate,
-      });
+      };
+      
+      debugPrint('📤 Inserting data: $data');
+      
+      await SupabaseService.client.from('wish_list_items').insert(data);
+      
+      debugPrint('✅ Wish list item added successfully!');
       // Invalidate cache
       _recentItemsCache = null;
-    } catch (e) {
-      debugPrint('Error adding wish list item: $e');
+    } catch (e, stackTrace) {
+      debugPrint('❌ ERROR adding wish list item: $e');
+      debugPrint('📍 Stack trace: $stackTrace');
       rethrow;
     }
   }
